@@ -1,0 +1,100 @@
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from sqlalchemy.orm import Session
+from typing import List
+from database import get_db
+import models
+import schemas
+import security as auth_utils
+from services import storage
+from pathlib import Path
+
+router = APIRouter(prefix="/files", tags=["Files"])
+
+
+@router.post("/upload", response_model=schemas.FileOut, status_code=201)
+async def upload_file(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    db: Session = Depends(get_db),
+):
+    data = await file.read()
+
+    # Validate
+    try:
+        storage.validate_file(file.filename, len(data))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    # Save to disk
+    stored_name = storage.generate_stored_filename(file.filename)
+    upload_path = await storage.save_file(data, stored_name)
+
+    ext = Path(file.filename).suffix.lower().lstrip(".")
+    file_format = {"stl": "STL", "3mf": "3MF", "step": "STEP", "stp": "STEP"}.get(ext, ext.upper())
+
+    db_file = models.UploadedFile(
+        user_id=current_user.id,
+        filename=file.filename,
+        stored_filename=stored_name,
+        file_format=file_format,
+        file_size_bytes=len(data),
+        upload_path=upload_path,
+    )
+    db.add(db_file)
+    db.commit()
+    db.refresh(db_file)
+
+    return db_file
+
+
+@router.get("/", response_model=List[schemas.FileOut])
+def list_files(
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    db: Session = Depends(get_db),
+    skip: int = 0,
+    limit: int = 50,
+):
+    return (
+        db.query(models.UploadedFile)
+        .filter(models.UploadedFile.user_id == current_user.id)
+        .order_by(models.UploadedFile.uploaded_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/{file_id}", response_model=schemas.FileOut)
+def get_file(
+    file_id: int,
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    db: Session = Depends(get_db),
+):
+    db_file = db.query(models.UploadedFile).filter(
+        models.UploadedFile.id == file_id,
+        models.UploadedFile.user_id == current_user.id,
+    ).first()
+    if not db_file:
+        raise HTTPException(status_code=404, detail="File not found")
+    return db_file
+
+
+@router.delete("/{file_id}", status_code=204)
+def delete_file(
+    file_id: int,
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    db: Session = Depends(get_db),
+):
+    db_file = db.query(models.UploadedFile).filter(
+        models.UploadedFile.id == file_id,
+        models.UploadedFile.user_id == current_user.id,
+    ).first()
+    if not db_file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    storage.delete_file(db_file.stored_filename)
+    db.delete(db_file)
+    db.commit()
