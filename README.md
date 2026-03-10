@@ -2,6 +2,9 @@
 
 FastAPI backend for the CADfactory physics-to-capital compiler.
 
+# Brief
+CADfactory is your full-stack hardware venture analysis platform — FastAPI backend + vanilla JS frontend — with features including a 3D viewer (up to 150k triangles, 5-point lighting, soft shadows), an editable BOM system with manufacturing method selection (CNC, FDM, SLA, SLS, sheet metal, die casting, injection moulding, etc.), PDF report export, analysis history, and a light/dark theme.
+
 ## Stack
 - **FastAPI** — async REST API, auto OpenAPI docs
 - **SQLAlchemy + SQLite** — ORM + local database (swap to Postgres for prod)
