@@ -1,7 +1,9 @@
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 from database import get_db
@@ -80,6 +82,25 @@ def get_file(
     if not db_file:
         raise HTTPException(status_code=404, detail="File not found")
     return db_file
+
+
+@router.get("/{file_id}/download")
+def download_file(
+    file_id: int,
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    db: Session = Depends(get_db),
+):
+    db_file = db.query(models.UploadedFile).filter(
+        models.UploadedFile.id == file_id,
+        models.UploadedFile.user_id == current_user.id,
+    ).first()
+    if not db_file:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not os.path.exists(db_file.upload_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    media_types = {"STL": "application/sla", "3MF": "application/vnd.ms-package.3dmanufacturing-3dmodel+xml", "STEP": "application/step"}
+    media_type = media_types.get(db_file.file_format, "application/octet-stream")
+    return FileResponse(db_file.upload_path, media_type=media_type, filename=db_file.filename)
 
 
 @router.delete("/{file_id}", status_code=204)

@@ -12,7 +12,11 @@ from dotenv import load_dotenv
 from database import engine, Base
 import models  # noqa: F401 — ensures models are registered before create_all
 from routers import auth, files, analysis, materials
-
+# Near the top, with your other router imports:
+from routers.generate import router as generate_router
+from routers.topology import router as topology_router
+from routers.feedback import router as feedback_router
+from routers.fine_tune import router as fine_tune_router
 load_dotenv()
 
 
@@ -54,7 +58,11 @@ app.include_router(auth.router)
 app.include_router(files.router)
 app.include_router(analysis.router)
 app.include_router(materials.router)
-
+# Where you include routers (near app.include_router(auth_router)):
+app.include_router(generate_router)
+app.include_router(topology_router)
+app.include_router(feedback_router)
+app.include_router(fine_tune_router)
 
 # ── Health check ──────────────────────────────────────────────
 @app.get("/", tags=["Health"])
