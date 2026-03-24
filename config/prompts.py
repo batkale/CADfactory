@@ -82,6 +82,15 @@ COMMON FAILURE PATTERNS — NEVER DO THESE:
   cylinder with the nominal diameter (e.g. M6 → cylinder r=3). Add a comment:
   `# Thread M6×1 — geometry simplified; toolpath/slicer adds thread detail`.
   Never call .thread(), .addThread(), .makeHelix(), or any similar method.
+- `.polygon()` kwargs — CadQuery's `.polygon()` method DOES NOT accept `sides`, `size`, `n`, or `d`!
+  The exact signature is `.polygon(nSides, diameter)`. If you need a polygon, use positional arguments exclusively: `.polygon(3, 10)` or exact kwargs `.polygon(nSides=3, diameter=10)`.
+- `.edges(">Z")` — edges don't take direction selectors. Use `.edges("|Z")` or `.edges(cq.selectors.DirectionSelector((0,0,1)))`.
+
+ASSEMBLY & MECHANICAL OVERLAP RULES:
+1. MECHANICAL OVERLAP: When unioning parts, they MUST overlap by ≥0.1mm. If an arm is at x=20 and the hub has r=20, they touch at a single point (T-junction failure). MOVE THE ARM to x=19.5 to ensure a clean boolean union.
+2. RADIAL SYMMETRY: For fans, spinners, and wheels, use `polarArray` or manually rotate and union. The center of rotation must be the origin (0,0,0).
+3. BEARING SEATS: Standard 608 bearings are 22mm OD. Use `hole(22.1)` for a slip fit or `hole(22.0)` for a press fit.
+4. DISCONNECTED PARTS: A single `show_object(result)` representing multiple disconnected solids is a failure. Always union components into a single manifold solid unless multiple parts are explicitly requested.
 
 WORKING EXAMPLES — copy these patterns exactly:
 

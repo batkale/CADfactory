@@ -1,0 +1,34 @@
+Traceback (most recent call last):
+  File "C:\Users\alper\Documents\GitHub\CADfactory\tests\verify_thinking.py", line 26, in verify_thinking
+    print("\n".join(script.split("\n")[:60]))
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 40-42: character maps to <undefined>
+--- VERIFYING THINKING: 'fidget spinner with 3 arms and standard 608 bearing holes' ---
+
+--- GENERATED SCRIPT PREVIEW ---
+CRITICAL ERROR: 'charmap' codec can't encode characters in position 40-42: character maps to <undefined>
+Traceback (most recent call last):
+  File "C:\Python314\Lib\asyncio\runners.py", line 127, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Python314\Lib\asyncio\base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\alper\Documents\GitHub\CADfactory\tests\verify_thinking.py", line 60, in <module>
+    asyncio.run(verify_thinking())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\asyncio\runners.py", line 204, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Python314\Lib\asyncio\runners.py", line 132, in run
+    raise KeyboardInterrupt()
+KeyboardInterrupt
+^C
