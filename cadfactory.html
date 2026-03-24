@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>CADfactory</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/STLLoader.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
 :root{
@@ -120,7 +121,7 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
 .red-bar{background:var(--red-bg);border:1px solid var(--red-border);border-radius:12px;padding:10px 14px;display:flex;gap:8px;margin-bottom:16px}
 .pbar{height:6px;background:var(--bg4);border-radius:4px;overflow:hidden;margin-top:5px}
 .pfill{height:100%;border-radius:4px}
-.cad-viewer{width:100%;height:220px;background:var(--bg3);border-radius:12px;border:1px solid var(--border);overflow:hidden;position:relative;margin-bottom:16px;cursor:grab}
+.cad-viewer{width:100%;height:400px;background:var(--bg3);border-radius:12px;border:1px solid var(--border);overflow:hidden;position:relative;margin-bottom:16px;cursor:grab}
 .cad-viewer:active{cursor:grabbing}
 .cad-canvas{width:100%;height:100%;display:block}
 .cad-label{position:absolute;bottom:8px;right:8px;font-size:10px;color:var(--cyan);font-family:monospace;background:rgba(248,250,252,0.9);padding:3px 8px;border-radius:4px;border:1px solid var(--cyan-border)}
@@ -244,7 +245,64 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
 .gen-fail-actions{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);flex-wrap:wrap}
 
 .hidden{display:none!important}
-@media(max-width:768px){.grid3,.region-grid,.opt-grid,.grid2,.feature-grid{grid-template-columns:1fr}.nav-links{display:none}}
+/* Selection Sidebar */
+.gen-viewer-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.gen-viewer-main {
+  width: 100%;
+  height: 400px;
+  position: relative;
+  background: var(--bg3);
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  box-shadow: inset 0 2px 10px rgba(0,0,0,0.05);
+}
+.gen-selection-bottombar {
+  width: 100%;
+  min-height: 80px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px 20px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  box-shadow: var(--shadow);
+  transition: all 0.3s ease;
+  z-index: 100;
+}
+.gen-selection-bottombar.empty {
+  opacity: 0.6;
+  justify-content: center;
+}
+.gen-selection-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sel-color-control { 
+  display: flex; align-items: center; gap: 10px; 
+  background: var(--bg3); padding: 5px 12px; 
+  border-radius: 100px; border: 1px solid var(--border2);
+}
+.sel-color-input { 
+  width: 24px; height: 24px; padding: 0; border: none; background: none; 
+  cursor: pointer; border-radius: 50%; overflow: hidden; 
+}
+.sel-color-input::-webkit-color-swatch-wrapper { padding: 0; }
+.sel-color-input::-webkit-color-swatch { border: none; border-radius: 50%; }
+.sel-title { font-size: 14px; font-weight: 800; color: var(--cyan); margin-bottom: 2px; }
+.sel-label { font-size: 10px; color: var(--text4); text-transform: uppercase; letter-spacing: 0.05em; }
+.sel-value { font-size: 12px; font-weight: 600; color: var(--text2); font-family: monospace; }
+
+@media(max-width:768px){.grid3,.region-grid,.opt-grid,.grid2,.feature-grid,.gen-viewer-container{grid-template-columns:1fr; flex-direction: column; height: auto}.nav-links{display:none}.gen-selection-sidebar{width: 100%; height: auto}}
 </style>
 </head>
 <body>
@@ -473,17 +531,31 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
           </div>
         </div>
 
-        <!-- 3D Viewer -->
-        <div class="cad-viewer" id="gen-viewer-wrap" style="height:280px;margin-bottom:12px">
-          <canvas id="gen-canvas" class="cad-canvas"></canvas>
-          <canvas id="gen-axis-canvas" class="axis-widget"></canvas>
-          <div class="cad-controls">
-            <button class="cad-btn" onclick="genToggleWire()">WIRE</button>
-            <button class="cad-btn" onclick="genResetCam()">⟳</button>
-            <input type="color" id="gen-color" value="#22d3ee" title="Part colour" style="width:26px;height:22px;border:1px solid var(--border2);border-radius:4px;cursor:pointer;padding:0;background:none" onchange="setGenColor(this.value)"/>
+          <!-- 3D AREA (Stacked) -->
+          <div class="gen-viewer-container">
+            <div id="gen-viewer-wrap" class="gen-viewer-main">
+              <canvas id="gen-canvas"></canvas>
+              
+              <div class="viewer-controls" style="top:16px;right:16px">
+                <button class="btn-tool" onclick="genToggleWire()">WIRE</button>
+                <button class="btn-tool" onclick="genResetCam()">↺</button>
+                <input type="color" id="gen-color" oninput="setGenColor(this.value)" value="#22d3ee" style="width:36px;height:36px;padding:2px;border-radius:8px">
+              </div>
+
+              <div id="gen-axis-wrap" style="position:absolute;bottom:16px;left:16px;width:64px;height:64px;background:rgba(255,255,255,0.6);border-radius:12px;backdrop-filter:blur(4px);border:1px solid var(--border)">
+                <canvas id="gen-axis-canvas" width="64" height="64"></canvas>
+              </div>
+
+              <div style="position:absolute;bottom:16px;right:16px;font-size:11px;color:var(--text3);background:rgba(255,255,255,0.7);padding:6px 12px;border-radius:30px;backdrop-filter:blur(4px);border:1px solid var(--border)">
+                Click components to select · Drag to rotate
+              </div>
+            </div>
+
+            <div id="gen-selection-sidebar" class="gen-selection-bottombar empty">
+              <div style="font-size:24px;margin-right:12px">🖱️</div>
+              <div style="font-size:12px;font-weight:600;color:var(--text3)">Select a component to view technical details</div>
+            </div>
           </div>
-          <div class="cad-label">Drag to rotate · Scroll to zoom</div>
-        </div>
 
         <!-- BOM suggestions -->
         <div id="gen-bom-preview" style="margin-bottom:12px"></div>
@@ -1021,12 +1093,36 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
 <script>
 // ── CONFIG ───────────────────────────────────────────────────
 var API = 'http://localhost:8000';
+// 3D Gen Viewer State
+window.genRenderer=null; window.genScene=null; window.genCamera=null;
+window.genAllMeshes=[]; window.genAnimId=null;
+window.genDragging=false; window.genLastMouse={x:0,y:0};
+window.genSph={theta:0.6, phi:1.0, radius:3};
+window.genWireMode=false;
+window.genSelectedMesh=null; window.genHoveredMesh=null;
+window.genRaycaster=new THREE.Raycaster(); window.genMouse=new THREE.Vector2();
 
 // ── STATE ────────────────────────────────────────────────────
 var TOKEN = null, USER = null;
-var G = null, C = null, R = null, currentTier = 1, cadAnimId = null;
-var currentFile = null, currentReportId = null;
-var r2 = function(n){return Math.round(n*100)/100;};
+var G = null, C = null, R = null, currentTier = 1;
+window.cadAnimId = null;
+window.currentFile = null; window.currentReportId = null;
+// CAD Viewer State
+window.threeRenderer=null; window.threeScene=null; window.threeCamera=null;
+window.threeMesh=null; window.threeWireMesh=null; window.threeAllMeshes=[];
+window.viewerMode='solid'; window.isDragging=false; window.lastMouse={x:0,y:0};
+window.spherical={theta:0.6, phi:1.0, radius:3};
+// Generated Viewer State
+window.genRenderer=null; window.genScene=null; window.genCamera=null;
+window.genAllMeshes=[]; window.genSelectedMesh=null; window.genHoveredMesh=null;
+window.genAnimId=null; window.genWireMode=false;
+window.genSph={theta:0.6, phi:1.0, radius:3};
+window.genDragging=false; window.genLastMouse={x:0,y:0};
+window.genMouse = new THREE.Vector2();
+window.genRaycaster = new THREE.Raycaster();
+window.genCurrentScript = ''; window.genSTLBlob = null;
+window.genHistory = []; window.genHistoryIdx = -1;
+function r2(n){ return Math.round(n*100)/100; }
 var CKEYS = ['local','nearshore','offshore'];
 var TIERS = [1, 100, 500];
 function $(id){return document.getElementById(id);}
@@ -1070,7 +1166,7 @@ function setPage(name){
     $('nav-topology').className  = 'nav-link ' + (name === 'topology'  ? 'active' : 'inactive');
     $('nav-about').className     = 'nav-link ' + (name === 'about'     ? 'active' : 'inactive');
   }
-  if(name !== 'dashboard' && cadAnimId){cancelAnimationFrame(cadAnimId); cadAnimId = null;}
+  if(name !== 'dashboard' && window.cadAnimId){cancelAnimationFrame(window.cadAnimId); window.cadAnimId = null;}
 }
 
 function goHome(){
@@ -2230,56 +2326,53 @@ function buildGroupedMeshes(groups, scene){
 }
 
 // ── THREE.JS 3D VIEWER ───────────────────────────────────────
-var threeRenderer=null, threeScene=null, threeCamera=null;
-var threeMesh=null, threeWireMesh=null, threeAllMeshes=[];
-var viewerMode='solid'; // 'solid' | 'wire' | 'both'
-var isDragging=false, lastMouse={x:0,y:0};
-var spherical={theta:0.6, phi:1.0, radius:3};
+// ── THREE.JS 3D VIEWER ───────────────────────────────────────
 
 function startCADViewer(){
-  if(cadAnimId){cancelAnimationFrame(cadAnimId); cadAnimId=null;}
-  threeAllMeshes = [];
-  if(threeRenderer){threeRenderer.dispose(); threeRenderer=null;}
+  if(window.cadAnimId){cancelAnimationFrame(window.cadAnimId); window.cadAnimId=null;}
+  window.threeAllMeshes = [];
+  if(window.threeRenderer){window.threeRenderer.dispose(); window.threeRenderer=null;}
 
   var wrap = $('cad-viewer-wrap');
   var canvas = $('cad-canvas');
+  if(!wrap || !canvas) return;
   var W = wrap.offsetWidth, H = wrap.offsetHeight || 220;
   canvas.width = W; canvas.height = H;
 
   // Scene
-  threeScene = new THREE.Scene();
-  threeScene.background = new THREE.Color(0x030712);
+  window.threeScene = new THREE.Scene();
+  window.threeScene.background = new THREE.Color(0x030712);
 
   // Camera
-  threeCamera = new THREE.PerspectiveCamera(45, W/H, 0.01, 10000);
+  window.threeCamera = new THREE.PerspectiveCamera(45, W/H, 0.01, 10000);
 
   // Renderer — higher quality
-  threeRenderer = new THREE.WebGLRenderer({canvas: canvas, antialias: true, precision: 'highp'});
-  threeRenderer.setSize(W, H);
-  threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 3));
-  threeRenderer.shadowMap.enabled = true;
-  threeRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  window.threeRenderer = new THREE.WebGLRenderer({canvas: canvas, antialias: true, precision: 'highp'});
+  window.threeRenderer.setSize(W, H);
+  window.threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 3));
+  window.threeRenderer.shadowMap.enabled = true;
+  window.threeRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   // Lights — more realistic 3-point setup
   var ambient = new THREE.AmbientLight(0xffffff, 0.35);
-  threeScene.add(ambient);
+  window.threeScene.add(ambient);
   var keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
   keyLight.position.set(3, 5, 4);
   keyLight.castShadow = true;
-  threeScene.add(keyLight);
+  window.threeScene.add(keyLight);
   var fillLight = new THREE.DirectionalLight(0xdde8f0, 0.5);
   fillLight.position.set(-4, 2, 2);
-  threeScene.add(fillLight);
+  window.threeScene.add(fillLight);
   var rimLight = new THREE.DirectionalLight(0xffffff, 0.3);
   rimLight.position.set(0, -3, -4);
-  threeScene.add(rimLight);
+  window.threeScene.add(rimLight);
   var hemi = new THREE.HemisphereLight(0xe8f0ff, 0xf0f0e8, 0.3);
-  threeScene.add(hemi);
+  window.threeScene.add(hemi);
 
   // Grid — light mode friendly
   var grid = new THREE.GridHelper(4, 20, 0xd1d5db, 0xe5e7eb);
   grid.position.y = -1.1;
-  threeScene.add(grid);
+  window.threeScene.add(grid);
 
   // Build grouped geometry (multi-body aware)
   var rawGroups;
@@ -2292,37 +2385,37 @@ function startCADViewer(){
     return;
   }
 
-  var built = buildGroupedMeshes(rawGroups, threeScene);
+  var built = buildGroupedMeshes(rawGroups, window.threeScene);
   if(!built.meshes.length){ drawFallbackBBox(); return; }
 
-  threeAllMeshes = built.meshes;
-  threeMesh = built.meshes[0];         // keep ref for legacy callers
-  threeWireMesh = built.wireMesh;
+  window.threeAllMeshes = built.meshes;
+  window.threeMesh = built.meshes[0];         // keep ref for legacy callers
+  window.threeWireMesh = built.wireMesh;
 
   // Light scene background
-  threeRenderer.setClearColor(document.documentElement.dataset.theme === 'dark' ? 0x030712 : 0xf1f5f9, 1);
+  window.threeRenderer.setClearColor(document.documentElement.dataset.theme === 'dark' ? 0x030712 : 0xf1f5f9, 1);
 
   // Set initial view mode
-  setViewMode(viewerMode);
+  setViewMode(window.viewerMode);
 
   // Camera orbit radius
-  spherical.radius = 3;
+  window.spherical.radius = 3;
   updateCamera();
 
   // Mouse controls
   setupOrbitControls(wrap);
 
   // Axis widget
-  var updateAxisCAD = createAxisWidget('cad-axis-canvas', function(){ return spherical; });
+  var updateAxisCAD = createAxisWidget('cad-axis-canvas', function(){ return window.spherical; });
 
   // Animate
   var autoRotate = true;
   function animate(){
-    cadAnimId = requestAnimationFrame(animate);
-    if(autoRotate && !isDragging) spherical.theta += 0.005;
+    window.cadAnimId = requestAnimationFrame(animate);
+    if(autoRotate && !window.isDragging) window.spherical.theta += 0.005;
     updateCamera();
     updateAxisCAD();
-    threeRenderer.render(threeScene, threeCamera);
+    window.threeRenderer.render(window.threeScene, window.threeCamera);
   }
   animate();
 
@@ -2350,28 +2443,28 @@ function buildThreeGeometry(){
 }
 
 function updateCamera(){
-  var x = spherical.radius * Math.sin(spherical.phi) * Math.sin(spherical.theta);
-  var y = spherical.radius * Math.cos(spherical.phi);
-  var z = spherical.radius * Math.sin(spherical.phi) * Math.cos(spherical.theta);
-  threeCamera.position.set(x, y, z);
-  threeCamera.lookAt(0, 0, 0);
+  var x = window.spherical.radius * Math.sin(window.spherical.phi) * Math.sin(window.spherical.theta);
+  var y = window.spherical.radius * Math.cos(window.spherical.phi);
+  var z = window.spherical.radius * Math.sin(window.spherical.phi) * Math.cos(window.spherical.theta);
+  window.threeCamera.position.set(x, y, z);
+  window.threeCamera.lookAt(0, 0, 0);
 }
 
 function setupOrbitControls(el){
   el.addEventListener('mousedown', function(e){
-    isDragging=true; lastMouse={x:e.clientX, y:e.clientY};
+    window.isDragging=true; window.lastMouse={x:e.clientX, y:e.clientY};
   });
   window.addEventListener('mousemove', function(e){
-    if(!isDragging) return;
-    var dx = e.clientX - lastMouse.x, dy = e.clientY - lastMouse.y;
-    spherical.theta -= dx * 0.01;
-    spherical.phi = Math.max(0.1, Math.min(Math.PI-0.1, spherical.phi + dy*0.01));
-    lastMouse = {x:e.clientX, y:e.clientY};
+    if(!window.isDragging) return;
+    var dx = e.clientX - window.lastMouse.x, dy = e.clientY - window.lastMouse.y;
+    window.spherical.theta -= dx * 0.01;
+    window.spherical.phi = Math.max(0.1, Math.min(Math.PI-0.1, window.spherical.phi + dy*0.01));
+    window.lastMouse = {x:e.clientX, y:e.clientY};
   });
-  window.addEventListener('mouseup', function(){isDragging=false;});
+  window.addEventListener('mouseup', function(){window.isDragging=false;});
   el.addEventListener('wheel', function(e){
     e.preventDefault();
-    spherical.radius = Math.max(0.5, Math.min(20, spherical.radius + e.deltaY*0.005));
+    window.spherical.radius = Math.max(0.5, Math.min(20, window.spherical.radius + e.deltaY*0.005));
   }, {passive:false});
   // Touch
   var lastTouch = null;
@@ -2382,8 +2475,8 @@ function setupOrbitControls(el){
     e.preventDefault();
     if(e.touches.length===1 && lastTouch){
       var dx=e.touches[0].clientX-lastTouch.x, dy=e.touches[0].clientY-lastTouch.y;
-      spherical.theta -= dx*0.01;
-      spherical.phi = Math.max(0.1, Math.min(Math.PI-0.1, spherical.phi+dy*0.01));
+      window.spherical.theta -= dx*0.01;
+      window.spherical.phi = Math.max(0.1, Math.min(Math.PI-0.1, window.spherical.phi+dy*0.01));
       lastTouch={x:e.touches[0].clientX, y:e.touches[0].clientY};
     }
   }, {passive:false});
@@ -2391,25 +2484,25 @@ function setupOrbitControls(el){
 }
 
 function setViewMode(mode){
-  viewerMode = mode;
-  if(!threeAllMeshes.length) return;
+  window.viewerMode = mode;
+  if(!window.threeAllMeshes || !window.threeAllMeshes.length) return;
   if(mode==='solid'){
-    threeAllMeshes.forEach(function(m){ m.visible=true; m.material.wireframe=false; });
-    if(threeWireMesh) threeWireMesh.visible=false;
+    window.threeAllMeshes.forEach(function(m){ m.visible=true; m.material.wireframe=false; });
+    if(window.threeWireMesh) window.threeWireMesh.visible=false;
   } else if(mode==='wire'){
-    threeAllMeshes.forEach(function(m){ m.visible=true; m.material.wireframe=true; });
-    if(threeWireMesh) threeWireMesh.visible=false;
+    window.threeAllMeshes.forEach(function(m){ m.visible=true; m.material.wireframe=true; });
+    if(window.threeWireMesh) window.threeWireMesh.visible=false;
   } else { // 'both'
-    threeAllMeshes.forEach(function(m){ m.visible=true; m.material.wireframe=false; });
-    if(threeWireMesh){ threeWireMesh.visible=true; threeWireMesh.material.opacity=0.12; threeWireMesh.material.transparent=true; }
+    window.threeAllMeshes.forEach(function(m){ m.visible=true; m.material.wireframe=false; });
+    if(window.threeWireMesh){ window.threeWireMesh.visible=true; window.threeWireMesh.material.opacity=0.12; window.threeWireMesh.material.transparent=true; }
   }
   $('btn-solid').className='cad-btn'+(mode==='solid'?' active':'');
   $('btn-wireframe').className='cad-btn'+(mode==='wire'?' active':'');
 }
 
-function toggleWireframe(){setViewMode(viewerMode==='wire'?'solid':'wire');}
-function toggleSolid(){setViewMode(viewerMode==='solid'?'both':'solid');}
-function resetCamera(){spherical={theta:0.6,phi:1.0,radius:3}; updateCamera();}
+function toggleWireframe(){setViewMode(window.viewerMode==='wire'?'solid':'wire');}
+function toggleSolid(){setViewMode(window.viewerMode==='solid'?'both':'solid');}
+function resetCamera(){window.spherical={theta:0.6,phi:1.0,radius:3}; updateCamera();}
 
 function drawFallbackBBox(){
   var bbox = G.bounding_box_mm;
@@ -2718,98 +2811,252 @@ function openRFQ(){
   $('rfq-body').innerHTML = '<div class="rfq-pre">'+rfqText+'</div><div style="display:flex;justify-content:flex-end"><button class="btn btn-blue" onclick="navigator.clipboard.writeText(document.querySelector(\'.rfq-pre\').textContent)">Copy to Clipboard</button></div>';
 }
 
-// ── GENERATE PAGE 3D VIEWER ─────────────────────────────────
-var genRenderer=null, genScene=null, genCamera=null;
-var genMesh=null, genWireMesh=null, genAllMeshes=[], genAnimId=null;
-var genDragging=false, genLastMouse={x:0,y:0};
-var genSph={theta:0.6, phi:1.0, radius:3};
-var genWireMode=false;
+// ── GENERATED VIEWER ──────────────────────────────────────────
 
-async function startGenViewer(stlUrl){
+async function startGenViewer(partsManifest, legacyStlUrl){
+  // partsManifest: [{name, stl_url}]
   // Clean up previous
-  if(genAnimId){cancelAnimationFrame(genAnimId); genAnimId=null;}
-  genAllMeshes = [];
-  if(genRenderer){genRenderer.dispose(); genRenderer=null;}
+  if(window.genAnimId){cancelAnimationFrame(window.genAnimId); window.genAnimId=null;}
+  window.genAllMeshes = [];
+  window.genSelectedMesh = null;
+  window.genHoveredMesh = null;
+  if(window.genRenderer){window.genRenderer.dispose(); window.genRenderer=null;}
 
   var wrap = $('gen-viewer-wrap');
   var canvas = $('gen-canvas');
   if(!wrap || !canvas) return;
 
-  var W = wrap.offsetWidth, H = wrap.offsetHeight || 280;
+  var W = wrap.offsetWidth, H = wrap.offsetHeight || 320;
   canvas.width = W; canvas.height = H;
 
-  // Fetch and parse STL
-  var tris;
-  try {
-    var res = await fetch(API + stlUrl);
-    if(!res.ok) return;
-    var buf = await res.arrayBuffer();
-    tris = parseBinarySTL(buf);
-    if(!tris || !tris.length) return;
-  } catch(e){ console.warn('Gen viewer STL fetch failed:', e); return; }
-
   // Scene
-  genScene = new THREE.Scene();
+  window.genScene = new THREE.Scene();
 
   // Camera
-  genCamera = new THREE.PerspectiveCamera(45, W/H, 0.01, 10000);
+  window.genCamera = new THREE.PerspectiveCamera(45, W/H, 0.01, 10000);
 
   // Renderer
-  genRenderer = new THREE.WebGLRenderer({canvas: canvas, antialias: true, precision: 'highp'});
-  genRenderer.setSize(W, H);
-  genRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 3));
-  genRenderer.shadowMap.enabled = true;
-  genRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  genRenderer.setClearColor(document.documentElement.dataset.theme === 'dark' ? 0x030712 : 0xf1f5f9, 1);
+  window.genRenderer = new THREE.WebGLRenderer({canvas: canvas, antialias: true, precision: 'highp'});
+  window.genRenderer.setSize(W, H);
+  window.genRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 3));
+  window.genRenderer.shadowMap.enabled = true;
+  window.genRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  window.genRenderer.setClearColor(document.documentElement.dataset.theme === 'dark' ? 0x030712 : 0xf1f5f9, 1);
 
   // Lights
-  genScene.add(new THREE.AmbientLight(0xffffff, 0.35));
+  window.genScene.add(new THREE.AmbientLight(0xffffff, 0.6)); 
   var key = new THREE.DirectionalLight(0xffffff, 1.2);
-  key.position.set(3, 5, 4); key.castShadow = true;
-  genScene.add(key);
-  var fill = new THREE.DirectionalLight(0xdde8f0, 0.5);
-  fill.position.set(-4, 2, 2);
-  genScene.add(fill);
-  genScene.add(new THREE.HemisphereLight(0xe8f0ff, 0xf0f0e8, 0.3));
+  key.position.set(5, 10, 7); key.castShadow = true;
+  window.genScene.add(key);
+  var fill = new THREE.DirectionalLight(0xdde8f0, 0.8); 
+  fill.position.set(-5, 5, 5);
+  window.genScene.add(fill);
+  window.genScene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.4));
+  
+  // Axes Helper
+  window.genScene.add(new THREE.AxesHelper(1));
 
   // Grid
   var grid = new THREE.GridHelper(4, 20, 0xd1d5db, 0xe5e7eb);
   grid.position.y = -1.1;
-  genScene.add(grid);
+  window.genScene.add(grid);
 
-  // Split into disconnected bodies and build grouped meshes
-  var genGroups = splitIntoGroups(tris);
-  var genBuilt = buildGroupedMeshes(genGroups, genScene);
-  if(!genBuilt.meshes.length) return;
+  // Loading Logic
+  var loader = new THREE.STLLoader();
+  var parts = partsManifest || (legacyStlUrl ? [{name: 'Complete Assembly', stl_url: legacyStlUrl}] : []);
+  if(!parts.length) return;
 
-  genAllMeshes = genBuilt.meshes;
-  genMesh = genBuilt.meshes[0];
-  genWireMesh = genBuilt.wireMesh;
-  genWireMode = false;
-  if(genWireMesh) genWireMesh.visible = false;
+  var globalBBox = new THREE.Box3();
+  var loadedSomething = false;
+
+  for(var p of parts){
+    try {
+      var sep = (p.stl_url.startsWith('/') || API.endsWith('/')) ? '' : '/';
+      var fullUrl = p.stl_url.startsWith('http') ? p.stl_url : (API + sep + p.stl_url);
+      var geom = await new Promise((res, rej) => {
+        loader.load(fullUrl, res, undefined, rej);
+      });
+      if(!geom) continue;
+      
+      var mat = new THREE.MeshPhongMaterial({
+        color: 0xa8b8cc, 
+        specular: 0x222222, 
+        shininess: 60, 
+        side: THREE.DoubleSide
+      });
+      
+      var mesh = new THREE.Mesh(geom, mat);
+      mesh.name = p.name;
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      mesh.userData = { label: p.name, originalColor: mat.color.clone() };
+
+      window.genScene.add(mesh);
+      window.genAllMeshes.push(mesh);
+      
+      geom.computeBoundingBox();
+      globalBBox.expandByPoint(geom.boundingBox.min);
+      globalBBox.expandByPoint(geom.boundingBox.max);
+      loadedSomething = true;
+    } catch(e) { console.warn('Failed to load part:', p.name, e); }
+  }
+
+  if(!loadedSomething) return;
+
+  var center = new THREE.Vector3(); globalBBox.getCenter(center);
+  var size = new THREE.Vector3(); globalBBox.getSize(size);
+  var maxDim = Math.max(size.x, size.y, size.z);
+  var scale = (maxDim > 0) ? (2.5 / maxDim) : 1.0;
+
+  window.genAllMeshes.forEach(m => {
+    m.geometry.translate(-center.x, -center.y, -center.z);
+    m.geometry.scale(scale, scale, scale);
+    m.position.set(0,0,0);
+  });
 
   // Camera
-  genSph = {theta:0.6, phi:1.0, radius:3};
+  window.genSph = {theta:0.6, phi:1.0, radius:3};
   updateGenCamera();
 
   // Mouse controls
   setupGenOrbit(wrap);
 
+  // Interactivity
+  wrap.addEventListener('mousemove', onGenMouseMove);
+  wrap.addEventListener('click', onGenMouseClick);
+
   // Axis widget
-  var updateAxisGen = createAxisWidget('gen-axis-canvas', function(){ return genSph; });
+  var updateAxisGen = createAxisWidget('gen-axis-canvas', function(){ return window.genSph; });
 
   // Animate
   var autoRotate = true;
   function animate(){
-    genAnimId = requestAnimationFrame(animate);
-    if(autoRotate && !genDragging) genSph.theta += 0.005;
+    window.genAnimId = requestAnimationFrame(animate);
+    if(autoRotate && !window.genDragging) window.genSph.theta += 0.005;
     updateGenCamera();
     updateAxisGen();
-    genRenderer.render(genScene, genCamera);
+    window.genRenderer.render(window.genScene, window.genCamera);
   }
   animate();
   wrap.addEventListener('mousedown', function(){autoRotate=false;}, {once:true});
   wrap.addEventListener('touchstart', function(){autoRotate=false;}, {once:true});
+}
+
+function onGenMouseMove(event) {
+  var wrap = $('gen-viewer-wrap');
+  var rect = wrap.getBoundingClientRect();
+  window.genMouse.x = ((event.clientX - rect.left) / wrap.offsetWidth) * 2 - 1;
+  window.genMouse.y = -((event.clientY - rect.top) / wrap.offsetHeight) * 2 + 1;
+
+  window.genRaycaster.setFromCamera(window.genMouse, window.genCamera);
+  var intersects = window.genRaycaster.intersectObjects(window.genAllMeshes);
+
+  // Reset previous hover
+  if (window.genHoveredMesh && window.genHoveredMesh !== window.genSelectedMesh) {
+    window.genHoveredMesh.material.emissiveIntensity = 0;
+  }
+
+  if (intersects.length > 0) {
+    var mesh = intersects[0].object;
+    if (mesh !== window.genSelectedMesh) {
+      mesh.material.emissive.setHex(0x22d3ee);
+      mesh.material.emissiveIntensity = 0.3;
+      window.genHoveredMesh = mesh;
+      wrap.style.cursor = 'pointer';
+    }
+  } else {
+    window.genHoveredMesh = null;
+    wrap.style.cursor = 'grab';
+  }
+}
+
+function onGenMouseClick(event) {
+  if (window.genDragging) return; 
+
+  window.genRaycaster.setFromCamera(window.genMouse, window.genCamera);
+  var intersects = window.genRaycaster.intersectObjects(window.genAllMeshes);
+
+  // Reset previous selection
+  if (window.genSelectedMesh) {
+    window.genSelectedMesh.material.emissiveIntensity = 0;
+    window.genSelectedMesh.material.color.copy(window.genSelectedMesh.userData.originalColor);
+  }
+
+  if (intersects.length > 0) {
+    var mesh = intersects[0].object;
+    window.genSelectedMesh = mesh;
+    
+    // Highlight selection
+    mesh.material.emissive.setHex(0x0891b2);
+    mesh.material.emissiveIntensity = 0.5;
+    
+    showPartSidebar(mesh);
+  } else {
+    window.genSelectedMesh = null;
+    hidePartSidebar();
+  }
+}
+
+function showPartSidebar(mesh) {
+  var sidebar = $('gen-selection-sidebar');
+  sidebar.classList.remove('empty');
+  
+  // Calculate dimensions
+  mesh.geometry.computeBoundingBox();
+  var box = mesh.geometry.boundingBox;
+  var w = r2(box.max.x - box.min.x);
+  var h = r2(box.max.y - box.min.y);
+  var d = r2(box.max.z - box.min.z);
+
+  const name = mesh.name || 'Component';
+  const colorHex = '#' + mesh.material.color.getHexString();
+
+  // Use a row of cards for the bottom bar
+  sidebar.innerHTML = `
+    <div style="display:flex; align-items:center; gap:16px">
+      <div class="gen-selection-card">
+        <div class="sel-title">${name}</div>
+        <div style="font-size:11px;color:var(--text3);font-weight:600">${w} × ${h} × ${d} mm</div>
+      </div>
+      
+      <div style="width:1px; height:24px; background:var(--border2); margin:0 4px"></div>
+      
+      <div class="sel-color-control">
+        <span style="font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:0.03em">Color</span>
+        <input type="color" class="sel-color-input" value="${colorHex}" oninput="updateSelectedPartColor(this.value)">
+      </div>
+    </div>
+    
+    <div style="display:flex; align-items:center; gap:12px">
+      <button class="btn btn-outline" style="padding:6px 14px; font-size:12px; border-radius:10px" onclick="clearGenHighlight()">Deselect</button>
+    </div>
+  `;
+}
+
+function updateSelectedPartColor(hex) {
+  if (!window.genSelectedMesh) return;
+  const color = new THREE.Color(hex);
+  window.genSelectedMesh.material.color.copy(color);
+  // Important: sync originalColor so hover doesn't revert it
+  window.genSelectedMesh.userData.originalColor = color.getHex();
+  
+  // Subtle glow pulse
+  window.genSelectedMesh.material.emissive.set(color).multiplyScalar(0.4);
+  setTimeout(() => {
+     if (window.genSelectedMesh) {
+       // Revert to standard "selection" emissive if still selected
+       window.genSelectedMesh.material.emissive.setHex(0x0891b2);
+       window.genSelectedMesh.material.emissiveIntensity = 0.5;
+     }
+  }, 400);
+}
+
+function hidePartSidebar() {
+  var sidebar = $('gen-selection-sidebar');
+  sidebar.classList.add('empty');
+  sidebar.innerHTML = `
+    <div style="font-size:24px;margin-bottom:8px">🖱️</div>
+    <div style="font-size:12px;font-weight:600;color:var(--text3)">Select a component<br>to view details</div>
+  `;
 }
 
 function parseBinarySTL(buf){
@@ -2842,58 +3089,52 @@ function parseBinarySTL(buf){
 }
 
 function updateGenCamera(){
-  var r=genSph.radius, t=genSph.theta, p=genSph.phi;
-  genCamera.position.set(r*Math.sin(p)*Math.cos(t), r*Math.cos(p), r*Math.sin(p)*Math.sin(t));
-  genCamera.lookAt(0,0,0);
+  var r=window.genSph.radius, t=window.genSph.theta, p=window.genSph.phi;
+  window.genCamera.position.set(r*Math.sin(p)*Math.cos(t), r*Math.cos(p), r*Math.sin(p)*Math.sin(t));
+  window.genCamera.lookAt(0,0,0);
 }
 
 function setupGenOrbit(el){
-  el.addEventListener('mousedown', function(e){genDragging=true; genLastMouse={x:e.clientX,y:e.clientY};});
+  el.addEventListener('mousedown', function(e){window.genDragging=true; window.genLastMouse={x:e.clientX,y:e.clientY};});
   window.addEventListener('mousemove', function(e){
-    if(!genDragging) return;
-    var dx=e.clientX-genLastMouse.x, dy=e.clientY-genLastMouse.y;
-    genSph.theta -= dx*0.01;
-    genSph.phi = Math.max(0.1, Math.min(Math.PI-0.1, genSph.phi - dy*0.01));
-    genLastMouse={x:e.clientX,y:e.clientY};
+    if(!window.genDragging) return;
+    var dx=e.clientX-window.genLastMouse.x, dy=e.clientY-window.genLastMouse.y;
+    window.genSph.theta -= dx*0.01;
+    window.genSph.phi = Math.max(0.1, Math.min(Math.PI-0.1, window.genSph.phi - dy*0.01));
+    window.genLastMouse={x:e.clientX,y:e.clientY};
   });
-  window.addEventListener('mouseup', function(){genDragging=false;});
+  window.addEventListener('mouseup', function(){window.genDragging=false;});
   el.addEventListener('wheel', function(e){
     e.preventDefault();
-    genSph.radius = Math.max(1, Math.min(10, genSph.radius + e.deltaY*0.005));
+    window.genSph.radius = Math.max(1, Math.min(10, window.genSph.radius + e.deltaY*0.005));
+    updateGenCamera();
   }, {passive:false});
   // Touch
   el.addEventListener('touchstart', function(e){
-    if(e.touches.length===1){genDragging=true; genLastMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};}
+    if(e.touches.length===1){window.genDragging=true; window.genLastMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};}
   });
   el.addEventListener('touchmove', function(e){
-    if(!genDragging||e.touches.length!==1) return;
-    var dx=e.touches[0].clientX-genLastMouse.x, dy=e.touches[0].clientY-genLastMouse.y;
-    genSph.theta -= dx*0.01;
-    genSph.phi = Math.max(0.1, Math.min(Math.PI-0.1, genSph.phi - dy*0.01));
-    genLastMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};
+    if(!window.genDragging||e.touches.length!==1) return;
+    var dx=e.touches[0].clientX-window.genLastMouse.x, dy=e.touches[0].clientY-window.genLastMouse.y;
+    window.genSph.theta -= dx*0.01;
+    window.genSph.phi = Math.max(0.1, Math.min(Math.PI-0.1, window.genSph.phi - dy*0.01));
+    window.genLastMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};
     e.preventDefault();
   }, {passive:false});
-  el.addEventListener('touchend', function(){genDragging=false;});
+  el.addEventListener('touchend', function(){window.genDragging=false;});
 }
 
 function genToggleWire(){
-  genWireMode = !genWireMode;
-  genAllMeshes.forEach(function(m){ m.material.wireframe = genWireMode; m.visible = true; });
-  if(genMesh) genMesh.visible = true;
-  if(genWireMesh){
-    genWireMesh.visible = !genWireMode;
-    genWireMesh.material.opacity = genWireMode ? 0.6 : 0.04;
-  }
+  window.genWireMode = !window.genWireMode;
+  window.genAllMeshes.forEach(m => { m.material.wireframe = window.genWireMode; });
 }
-
-function genResetCam(){
-  genSph = {theta:0.6, phi:1.0, radius:3};
-}
-
+function genResetCam(){ window.genSph = {theta:0.6, phi:1.0, radius:3}; updateGenCamera(); }
 function setGenColor(hex){
-  // Apply single override colour to all body meshes (flattens multi-body palette)
-  genAllMeshes.forEach(function(m){ m.material.color.set(hex); });
-  if(genWireMesh) genWireMesh.material.color.set(hex);
+  var color = new THREE.Color(hex);
+  window.genAllMeshes.forEach(m => {
+    m.material.color.copy(color);
+    m.userData.originalColor = color.clone();
+  });
 }
 
 // Visual-only commands that don't need Gemini
@@ -2946,10 +3187,6 @@ function switchUploadTab(tab){
 }
 
 // ── AI PART GENERATION ──────────────────────────────────────
-var genCurrentScript = '';
-var genSTLBlob = null;
-var genHistory = [];      // undo/redo snapshots
-var genHistoryIdx = -1;
 
 // ── TEMPLATE LIBRARY ─────────────────────────────────────────
 var TEMPLATES = [
@@ -3467,8 +3704,10 @@ async function generatePart(){
       }
       throw new Error(finalData.error || 'Generation failed');
     }
-    showGenResult(finalData);
-
+    if(finalData.stl_url){
+      showGenResult(finalData);
+      await startGenViewer(finalData.parts, finalData.stl_url);
+    }
   } catch(e){
     showGenErr('Error: ' + e.message);
   } finally {
@@ -3501,8 +3740,8 @@ function showGenResult(data){
   _updateFeedbackRow(pipeline);
 
   // Script
-  genCurrentScript = data.script || '';
-  $('gen-script').value = genCurrentScript;
+  window.genCurrentScript = data.script || '';
+  $('gen-script').value = window.genCurrentScript;
 
   // Download links
   if(data.stl_url){
@@ -3551,11 +3790,12 @@ function showGenResult(data){
   var snapshot = {
     stl_url: data.stl_url, step_url: data.step_url, part_id: data.part_id || null,
     script: data.script || '', bom: data.bom_suggestion, warnings: data.warnings,
-    prompt: window._genLastPrompt, pipeline: pipeline
+    prompt: window._genLastPrompt, pipeline: pipeline,
+    parts: data.parts || null
   };
-  genHistory = genHistory.slice(0, genHistoryIdx + 1);
-  genHistory.push(snapshot);
-  genHistoryIdx = genHistory.length - 1;
+  window.genHistory = window.genHistory.slice(0, window.genHistoryIdx + 1);
+  window.genHistory.push(snapshot);
+  window.genHistoryIdx = window.genHistory.length - 1;
   _updateUndoRedo();
 
   // Reset feedback UI
@@ -3567,10 +3807,7 @@ function showGenResult(data){
   $('dislike-dropdown').style.display = 'none';
   $('like-dropdown').style.display = 'none';
 
-  // Start 3D viewer
-  if(data.stl_url){
-    startGenViewer(data.stl_url);
-  }
+  // Start 3D viewer call was moved inside generatePart for await
 }
 
 var _PIPELINE_CONFIG = {
@@ -3689,13 +3926,13 @@ async function confirmLikeFeedback(){
 
 function _updateUndoRedo(){
   var row = $('gen-undoredo-row');
-  if(genHistory.length > 1){
+  if(window.genHistory.length > 1){
     row.style.display = 'flex';
   }
-  $('btn-undo').disabled = genHistoryIdx <= 0;
-  $('btn-redo').disabled = genHistoryIdx >= genHistory.length - 1;
-  $('gen-history-label').textContent = genHistory.length > 1
-    ? (genHistoryIdx + 1) + ' / ' + genHistory.length
+  $('btn-undo').disabled = window.genHistoryIdx <= 0;
+  $('btn-redo').disabled = window.genHistoryIdx >= window.genHistory.length - 1;
+  $('gen-history-label').textContent = window.genHistory.length > 1
+    ? (window.genHistoryIdx + 1) + ' / ' + window.genHistory.length
     : '';
 }
 
@@ -3705,10 +3942,10 @@ function _restoreSnapshot(snap){
   window._genPartId    = snap.part_id;
   window._genLastPrompt = snap.prompt || '';
   window._genPipeline  = snap.pipeline || null;
-  genCurrentScript     = snap.script;
+  window.genCurrentScript = snap.script;
   _updateFeedbackRow(snap.pipeline || null);
   $('gen-script').value = snap.script;
-  if(snap.stl_url) startGenViewer(snap.stl_url);
+  if(snap.stl_url) startGenViewer(snap.parts || null, snap.stl_url);
   $('gen-dl-stl').href  = snap.stl_url  || '#';
   $('gen-dl-step').href = snap.step_url || '#';
   $('gen-thumb-up').style.background   = 'none';
@@ -3721,16 +3958,16 @@ function _restoreSnapshot(snap){
 }
 
 function undoGen(){
-  if(genHistoryIdx <= 0) return;
-  genHistoryIdx--;
-  _restoreSnapshot(genHistory[genHistoryIdx]);
+  if(window.genHistoryIdx <= 0) return;
+  window.genHistoryIdx--;
+  _restoreSnapshot(window.genHistory[window.genHistoryIdx]);
   _updateUndoRedo();
 }
 
 function redoGen(){
-  if(genHistoryIdx >= genHistory.length - 1) return;
-  genHistoryIdx++;
-  _restoreSnapshot(genHistory[genHistoryIdx]);
+  if(window.genHistoryIdx >= window.genHistory.length - 1) return;
+  window.genHistoryIdx++;
+  _restoreSnapshot(window.genHistory[window.genHistoryIdx]);
   _updateUndoRedo();
 }
 
@@ -3774,7 +4011,7 @@ async function refinePart(){
     return;
   }
 
-  if(!genCurrentScript){ showGenErr('No script to refine. Generate a part first.'); return; }
+  if(!window.genCurrentScript){ showGenErr('No script to refine. Generate a part first.'); return; }
 
   $('btn-refine').disabled = true;
   $('btn-refine').textContent = '⏳...';

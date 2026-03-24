@@ -10,11 +10,12 @@ import os
 import subprocess
 import tempfile
 import shutil
+import json
 import uuid
 import logging
 from pathlib import Path
-from typing import Optional
-from dataclasses import dataclass
+from typing import Optional, List
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class ExecutionResult:
     error: Optional[str] = None
     stdout: Optional[str] = None
     execution_time_s: float = 0.0
+    parts: List[dict] = field(default_factory=list) # [{"name": "...", "stl_path": "..."}]
 
 
 def execute_cadquery_sandboxed(
@@ -89,14 +91,16 @@ def execute_cadquery_sandboxed(
         # Build the execution script with exports injected
         exec_script = _build_execution_script(script, tmp_stl, tmp_step, export_step)
 
-        with open(script_path, "w") as f:
+        with open(script_path, "w", encoding="utf-8") as f:
             f.write(exec_script)
         
+        import sys
         try:
             result = subprocess.run(
-                ["python", script_path],
+                [sys.executable, script_path],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=timeout,
                 cwd=tmpdir,
                 env={
@@ -110,14 +114,24 @@ def execute_cadquery_sandboxed(
             elapsed = time.time() - start_time
             
             if result.returncode != 0:
-                error_msg = _clean_error(result.stderr)
-                logger.warning(f"CadQuery script failed ({elapsed:.1f}s): {error_msg[:200]}")
-                return ExecutionResult(
-                    success=False,
-                    error=error_msg,
-                    stdout=result.stdout,
-                    execution_time_s=elapsed
-                )
+                if os.path.exists(tmp_stl) and os.path.getsize(tmp_stl) > 0 and \
+                   os.path.exists(tmp_step) and os.path.getsize(tmp_step) > 0:
+                    logger.info(f"CadQuery exited with code {result.returncode} but successfully exported files. Treating as success (likely a shutdown segfault).")
+                else:
+                    error_msg = _clean_error(result.stderr)
+                    if error_msg == "Unknown error (no stderr output)":
+                        if result.stdout and result.stdout.strip():
+                            error_msg = f"Crash/Error. Stdout: {_clean_error(result.stdout)}"
+                        else:
+                            error_msg = "Hard crash (Access Violation / Segfault) in OpenCascade kernel. The geometry operations you attempted are invalid (likely a bad fillet/chamfer or self-intersecting boolean). Please simplify the design and AVOID complex fillets."
+                    
+                    logger.warning(f"CadQuery script failed ({elapsed:.1f}s): {error_msg[:200]}")
+                    return ExecutionResult(
+                        success=False,
+                        error=error_msg,
+                        stdout=result.stdout,
+                        execution_time_s=elapsed
+                    )
             
             # Check that STL was actually created
             if not os.path.exists(tmp_stl) or os.path.getsize(tmp_stl) == 0:
@@ -136,12 +150,32 @@ def execute_cadquery_sandboxed(
             
             logger.info(f"CadQuery script succeeded ({elapsed:.1f}s): {final_stl}")
             
+            # Parse parts manifest from stdout
+            parts_list = []
+            if result.stdout:
+                for line in result.stdout.split("\n"):
+                    if line.startswith("__MANIFEST__:"):
+                        try:
+                            manifest_data = json.loads(line.replace("__MANIFEST__:", ""))
+                            for p_entry in manifest_data:
+                                p_tmp_path = os.path.join(tmpdir, p_entry["file"])
+                                p_final_path = os.path.join(OUTPUT_DIR, f"{file_id}_{p_entry['file']}")
+                                if os.path.exists(p_tmp_path):
+                                    shutil.copy2(p_tmp_path, p_final_path)
+                                    parts_list.append({
+                                        "name": p_entry["name"],
+                                        "stl_path": p_final_path
+                                    })
+                        except Exception as e:
+                            logger.warning(f"Failed to parse parts manifest: {e}")
+
             return ExecutionResult(
                 success=True,
                 stl_path=final_stl,
                 step_path=final_step if (final_step and os.path.exists(final_step)) else None,
                 stdout=result.stdout,
-                execution_time_s=elapsed
+                execution_time_s=elapsed,
+                parts=parts_list
             )
             
         except subprocess.TimeoutExpired:
@@ -202,9 +236,12 @@ try:
 except Exception:
     pass  # cadquery internals differ — best effort
 
-# No-op show_object for headless execution
+# Headless part collection
+__parts__ = []
+
 def show_object(obj, name=None, options=None):
-    pass
+    if obj is not None:
+        __parts__.append((obj, name or f"part_{len(__parts__)}", options or {}))
 
 """
     
@@ -238,6 +275,22 @@ try:
 """
     
     export_block += """
+    
+    # Export individual parts if any were shown
+    print("__MANIFEST__:[", end="")
+    for i, (obj, name, opts) in enumerate(__parts__):
+        part_filename = f"part_{i}.stl"
+        part_path = os.path.join(os.getcwd(), part_filename).replace("\\\\", "\\\\\\\\")
+        try:
+            # Handle both Workplane and Shape objects
+            shape_obj = obj.val() if hasattr(obj, "val") else obj
+            shape_obj.exportStl(part_filename, tolerance=0.1, angularTolerance=0.1)
+            comma = "," if i < len(__parts__) - 1 else ""
+            print(f'{{"name": "{name}", "file": "{part_filename}"}}{comma}', end="")
+        except Exception as e:
+            pass # Skip failed parts
+    print("]")
+
 except NameError:
     print("ERROR: No 'result' variable defined in script", file=sys.stderr)
     sys.exit(1)

@@ -25,10 +25,10 @@ async def lifespan(app: FastAPI):
     # Create all tables on startup
     Base.metadata.create_all(bind=engine)
     os.makedirs(os.getenv("UPLOAD_DIR", "./uploads"), exist_ok=True)
-    print("✅ Database tables ready")
-    print("✅ Upload directory ready")
+    print("Database tables ready")
+    print("Upload directory ready")
     yield
-    print("👋 Server shutting down")
+    print("Server shutting down")
 
 
 app = FastAPI(
