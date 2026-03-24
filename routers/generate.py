@@ -32,17 +32,18 @@ get_current_user = auth_utils.get_current_user
 
 from config.prompts import (
     DESIGN_PLAN_PROMPT, DESIGN_PLAN_TO_CODE_TEMPLATE,
-    RETRY_PROMPT_TEMPLATE, build_system_prompt, STEP_IMPORT_SYSTEM_PROMPT,
-    REFINE_SYSTEM_PROMPT,
+    RETRY_PROMPT_TEMPLATE, build_system_prompt, build_system_prompt_with_examples,
+    STEP_IMPORT_SYSTEM_PROMPT, REFINE_SYSTEM_PROMPT,
 )
 from services.claude_cad import (
     generate_and_execute, refine_script, suggest_load_cases,
     _generate_content, MODEL_FLASH, MODEL_PRO, check_complexity, MAX_RETRIES,
     generate_with_tuned_model,
 )
-from services.fine_tuner import get_active_tuned_model
-from services.semantic_decomposer import decompose_prompt
+from services.semantic_decomposer import decompose_prompt, DecomposedObject
 from services.csg_builder import build_from_prompt_result
+from services.templates import TEMPLATE_MAP
+from services.rag_store import get_similar_examples, store_count
 from services.cadquery_runner import get_file_url, OUTPUT_DIR, execute_cadquery_sandboxed, EXECUTION_TIMEOUT
 from services.script_utils import (
     validate_script, extract_bom_from_script,
@@ -79,12 +80,20 @@ class GenerateRequest(BaseModel):
     )
 
 
+class PartMetadata(BaseModel):
+    """Metadata for a single component in an assembly."""
+    name: str = Field(..., description="Semantic name of the component")
+    stl_url: str = Field(..., description="URL to download the component STL")
+    color: Optional[str] = None
+
+
 class GenerateResponse(BaseModel):
     """Response body for part generation."""
     success: bool
     stl_url: Optional[str] = None
     step_url: Optional[str] = None
     script: str = ""
+    parts: List[PartMetadata] = []
     bom_suggestion: list = []
     warnings: list = []
     error: Optional[str] = None
@@ -92,10 +101,12 @@ class GenerateResponse(BaseModel):
     generation_time_s: float = 0.0
     part_id: Optional[int] = None
     # CSG pipeline metadata (backwards-compatible — all optional)
-    pipeline: Optional[str] = None           # "csg_builder" | "ai_fallback" | "needs_clarification"
+    pipeline: Optional[str] = None           # "csg_builder" | "ai_fallback" | "needs_clarification" | "precision_8layer"
     confidence: Optional[float] = None       # decomposer confidence score
     object_name: Optional[str] = None        # recognised object name
     dims_estimated: Optional[bool] = None    # whether dimensions were estimated
+    # 8-Layer precision pipeline report (only present when precision pipeline is used)
+    pipeline_report: Optional[dict] = None   # PipelineResult.to_dict() output
 
 
 class RefineRequest(BaseModel):
@@ -240,7 +251,7 @@ async def generate_part(req: GenerateRequest, user=Depends(get_current_user)):
     """
     logger.info(
         f"Generate request from {getattr(user, 'email', '?')}: "
-        f"{req.description[:60]}... ({req.manufacturing_method})"
+        f"{req.description[:60] if len(req.description) > 60 else req.description}... ({req.manufacturing_method})"  # type: ignore
     )
 
     result = await generate_and_execute(
@@ -278,11 +289,177 @@ async def generate_part(req: GenerateRequest, user=Depends(get_current_user)):
         stl_url=get_file_url(result.stl_path) if result.stl_path else None,
         step_url=get_file_url(result.step_path) if result.step_path else None,
         script=result.script,
+        parts=[
+            PartMetadata(name=p["name"], stl_url=get_file_url(p["stl_path"]))
+            for p in (result.parts or [])
+        ],
         bom_suggestion=result.bom_suggestion,
         warnings=result.warnings,
         attempts=result.attempts,
         generation_time_s=round(result.total_time_s, 2),
         part_id=part_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 8-Layer Precision Pipeline endpoint
+# ---------------------------------------------------------------------------
+
+@router.post("/precision", response_model=GenerateResponse)
+async def generate_part_precision(
+    req: GenerateRequest,
+    user=Depends(get_current_user),
+    skip_layer8: bool = Query(
+        default=False,
+        description="Skip the Layer 8 AI script overhaul (faster but less detailed)"
+    ),
+):
+    """
+    Generate a 3D part using the full 8-layer precision pipeline.
+
+    Layers:
+      1. NLP Contextual Extraction (AI)
+      2. Parameterization & Sorting (algorithmic)
+      3. Mathematical Constraint Validation (deterministic math)
+      4. Generative Gap-Filling (AI)
+      5. CSG Topology Planning (algorithmic)
+      6. Edge-Case Guard (AI)
+      7. Granular Script Generation (deterministic, 5-10x detail)
+      8. Script Linting & Precision Overhaul (AI — Pro model)
+
+    Response includes `pipeline_report` with per-layer timing and confidence scores.
+    """
+    import time as _time
+    from services.pipeline import run_precision_pipeline
+
+    logger.info(
+        f"[Precision Pipeline] request from {getattr(user, 'email', '?')}: "
+        f"{req.description[:60] if len(req.description) > 60 else req.description}... ({req.manufacturing_method})"  # type: ignore
+    )
+
+    # Run the 8-layer pipeline
+    pipeline_result = await run_precision_pipeline(
+        prompt=req.description,
+        manufacturing_method=req.manufacturing_method,
+        constraints=req.constraints,
+        skip_layer8=skip_layer8,
+    )
+
+    final_script = pipeline_result.final_script
+
+    if not pipeline_result.success or not final_script:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": pipeline_result.error or "Precision pipeline failed",
+                "pipeline_report": pipeline_result.to_dict(),
+            }
+        )
+
+    # Execute the generated script
+    from services.cadquery_runner import execute_cadquery_sandboxed
+    from services.script_utils import validate_script, extract_bom_from_script
+
+    is_valid, val_warnings = validate_script(final_script)
+    if not is_valid:
+        # One final self-heal attempt via the legacy retry system
+        logger.warning("[Precision] script failed linting — one legacy retry")
+        from services.claude_cad import generate_and_execute
+        legacy = await generate_and_execute(
+            req.description, req.manufacturing_method, req.constraints
+        )
+        if not legacy.success:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "Script failed validation and legacy fallback also failed.",
+                        "pipeline_report": pipeline_result.to_dict()}
+            )
+        # Use legacy result
+        return GenerateResponse(
+            success=True,
+            script=legacy.script or "",
+            stl_url=get_file_url(legacy.stl_path) if legacy.stl_path else None,
+            step_url=get_file_url(legacy.step_path) if legacy.step_path else None,
+            bom_suggestion=legacy.bom_suggestion,
+            warnings=val_warnings + (legacy.warnings or []),
+            attempts=legacy.attempts,
+            generation_time_s=pipeline_result.total_elapsed_s,
+            pipeline="precision_8layer_legacy_fallback",
+            confidence=pipeline_result.overall_accuracy,
+            object_name=pipeline_result.object_name,
+            pipeline_report=pipeline_result.to_dict(),
+        )
+
+    exec_result = execute_cadquery_sandboxed(final_script)
+
+    all_warnings = list(val_warnings)
+    attempts = 1
+
+    # Self-heal retry: if execution fails, fall back to legacy pipeline
+    if not exec_result.success:
+        logger.warning(
+            f"[Precision] Layer 7/8 script failed execution — "
+            f"falling back to legacy pipeline: {exec_result.error[:120] if exec_result.error else '?'}"
+        )
+        from services.claude_cad import generate_and_execute
+        legacy = await generate_and_execute(
+            req.description, req.manufacturing_method, req.constraints
+        )
+        if legacy.success:
+            final_script = legacy.script or ""
+            exec_result = type("R", (), {
+                "success": True,
+                "stl_path": legacy.stl_path,
+                "step_path": legacy.step_path,
+                "error": None,
+            })()
+            attempts = legacy.attempts
+            all_warnings.append(
+                f"Precision script fell back to legacy pipeline after execution failure "
+                f"({attempts} attempt(s))"
+            )
+        else:
+            exec_result = legacy  # still failed — error will be caught below
+
+    if not exec_result.success:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": exec_result.error,
+                "script": final_script,
+                "pipeline_report": pipeline_result.to_dict(),
+            }
+        )
+
+    bom = extract_bom_from_script(final_script)
+    part_id = _save_generated_part(
+        user_id=user.id,
+        description=req.description,
+        manufacturing_method=req.manufacturing_method,
+        script=final_script,
+        stl_path=exec_result.stl_path,
+        step_path=exec_result.step_path,
+        bom=bom,
+        warnings=all_warnings,
+        attempts=attempts,
+        generation_time_s=pipeline_result.total_elapsed_s,
+    )
+
+    return GenerateResponse(
+        success=True,
+        stl_url=get_file_url(exec_result.stl_path) if exec_result.stl_path else None,
+        step_url=get_file_url(exec_result.step_path) if exec_result.step_path else None,
+        script=final_script,
+        bom_suggestion=bom,
+        warnings=all_warnings,
+        attempts=attempts,
+        generation_time_s=pipeline_result.total_elapsed_s,
+        part_id=part_id,
+        pipeline="precision_8layer",
+        confidence=pipeline_result.overall_accuracy,
+        object_name=pipeline_result.object_name,
+        dims_estimated=False,  # precision pipeline always derives full dims
+        pipeline_report=pipeline_result.to_dict(),
     )
 
 
@@ -314,12 +491,21 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
         start_time = time.time()
         all_warnings: list = []
 
+        # ── Step 0: RAG (fetch similar approved examples) ─────────────────────
+        rag_examples = []
+        try:
+            rag_examples = get_similar_examples(req.description, req.manufacturing_method, k=3)
+            if rag_examples:
+                logger.info(f"RAG: injecting {len(rag_examples)} similar example(s) into stream prompt")
+        except Exception as e:
+            logger.warning(f"RAG lookup failed in stream (non-fatal): {e}")
+
         # ── Stage 1: Understanding + Decompose ───────────────────────────────
         yield sse("progress", {"stage": "understanding",
                                 "label": "Analysing your description...",
                                 "done": False})
 
-        decomposed = await asyncio.to_thread(decompose_prompt, req.description)
+        decomposed = await asyncio.to_thread(decompose_prompt, req.description, rag_examples=rag_examples)
 
         yield sse("progress", {"stage": "understanding",
                                 "label": "Understanding your description...",
@@ -344,31 +530,50 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
                 logger.info(f"CSG builder validation failed: {csg_result['errors']} — falling back to AI")
                 csg_result = None
 
-        if csg_result:
-            # ── CSG fast path ─────────────────────────────────────────────
+        # ── Stage 1.5: Template Path (HIGHEST PRIORITY) ───────────────────
+        template_script = None
+        template_errors = []
+        if decomposed.template_name in TEMPLATE_MAP:
+            from services.templates import validate_template_params
+            template_errors = validate_template_params(decomposed.template_name, decomposed.template_params)
+            
+            if not template_errors:
+                try:
+                    template_fn = TEMPLATE_MAP[decomposed.template_name]
+                    template_script = template_fn(decomposed.template_params)
+                    logger.info(f"Using template: {decomposed.template_name}")
+                except Exception as e:
+                    logger.warning(f"Template generation failed: {e}")
+                    template_errors = [f"Template generation failed: {e}"]
+            else:
+                logger.info(f"Template validation failed: {template_errors} — falling back to AI")
+
+        if template_script or csg_result:
+            # ── Template or CSG fast path ─────────────────────────────────
             yield sse("progress", {"stage": "executing",
-                                    "label": "Building 3D model from geometry tree...",
+                                    "label": "Building 3D model from verified path..." if template_script else "Building 3D model from geometry tree...",
                                     "done": False})
 
-            csg_script = csg_result["script"]
-            is_valid, validation_warnings = validate_script(csg_script)
+            final_script = template_script or csg_result["script"]
+            all_warnings.extend(template_errors)
+            is_valid, validation_warnings = validate_script(final_script)
             all_warnings.extend(validation_warnings)
 
-            exec_result = await asyncio.to_thread(execute_cadquery_sandboxed, csg_script)
+            exec_result = await asyncio.to_thread(execute_cadquery_sandboxed, final_script)
             attempts = 1
 
             if exec_result.success:
                 yield sse("progress", {"stage": "exporting", "label": "Exporting STL...", "done": True})
-                bom = extract_bom_from_script(csg_script)
+                bom = extract_bom_from_script(final_script)
                 part_id = _save_generated_part(
                     user_id=user_id,
                     description=req.description,
                     manufacturing_method=req.manufacturing_method,
-                    script=csg_script,
+                    script=final_script,
                     stl_path=exec_result.stl_path,
                     step_path=exec_result.step_path,
                     bom=bom,
-                    warnings=all_warnings + (csg_result.get("errors") or []),
+                    warnings=all_warnings + (csg_result.get("errors", []) if csg_result else []),
                     attempts=1,
                     generation_time_s=round(time.time() - start_time, 2),
                 )
@@ -376,21 +581,25 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
                     "success": True,
                     "stl_url": get_file_url(exec_result.stl_path) if exec_result.stl_path else None,
                     "step_url": get_file_url(exec_result.step_path) if exec_result.step_path else None,
-                    "script": csg_script,
+                    "script": final_script,
+                    "parts": [
+                        {"name": p["name"], "stl_url": get_file_url(p["stl_path"])}
+                        for p in (exec_result.parts or [])
+                    ],
                     "bom_suggestion": bom,
                     "warnings": all_warnings,
                     "attempts": 1,
                     "generation_time_s": round(time.time() - start_time, 2),
                     "part_id": part_id,
-                    "pipeline": "csg_builder",
+                    "pipeline": "template" if template_script else "csg_builder",
                     "confidence": decomposed.confidence,
                     "object_name": decomposed.object_name,
                     "dims_estimated": decomposed.dims_are_estimated,
                 })
                 return
 
-            # CSG execution failed — fall through to AI pipeline
-            logger.info(f"CSG script execution failed ({exec_result.error[:100]}) — falling back to AI")
+            # Fast path execution failed — fall through to AI pipeline
+            logger.info(f"Fast path script execution failed ({exec_result.error[:100]}) — falling back to AI")
 
         # ── Tuned model fast path (if a fine-tuned model is active) ───────────
         tuned_model_name = get_active_tuned_model(SessionLocal())
@@ -471,9 +680,10 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
         # ── Stage 3: Code generation — Pro writes CadQuery from the plan ──────
         yield sse("progress", {"stage": "generating",
                                 "label": "Generating CadQuery script...",
-                                "done": False})
+                                "done": True})
 
-        system_prompt = build_system_prompt(req.manufacturing_method)
+        # ── Stage 4: Prompt Construction with RAG ───────────────────────────
+        system_prompt = build_system_prompt_with_examples(req.manufacturing_method, rag_examples)
 
         if plan_json:
             constraints_str = ""
@@ -594,6 +804,10 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
             "stl_url": get_file_url(result.stl_path) if result.stl_path else None,
             "step_url": get_file_url(result.step_path) if result.step_path else None,
             "script": script,
+            "parts": [
+                {"name": p["name"], "stl_url": get_file_url(p["stl_path"])}
+                for p in (result.parts or [])
+            ],
             "bom_suggestion": bom,
             "warnings": all_warnings,
             "attempts": attempts,

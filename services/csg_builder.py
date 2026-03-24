@@ -314,12 +314,19 @@ def build_cadquery_script(obj: DecomposedObject) -> str:
     ]
 
     result_set = False
-    shape_idx = 0
+    shape_idx: int = 0
 
-    # Track rounded_box shapes that need multi-line fillet handling
-    rounded_vars: List[str] = []
+    # Part tracking — group operations by label
+    parts: dict[str, List[tuple[str, str]]] = {} # label -> list of (var, op)
+    
+    # Industrial Color Palette
+    COLOR_PALETTE = ["steelblue", "goldenrod", "gray", "indianred", "darkolivegreen"]
 
     for op in obj.operations:
+        label = op.label or "part"
+        if label not in parts:
+            parts[label] = []
+
         shape_lower = op.shape.lower()
         is_rounded = shape_lower == "rounded_box"
 
@@ -334,41 +341,34 @@ def build_cadquery_script(obj: DecomposedObject) -> str:
         for copy_angle in instances:
             var = f"_s{shape_idx}"
             shape_idx += 1
+            parts[label].append((var, op.op))
 
             is_curve = shape_lower == "curve_prism"
 
             # Build base expression / multi-line block
             if is_curve:
-                # Multi-line: generates `var = cq.Workplane(...)`
                 lines.extend(_curve_prism_lines(var, op.params))
             elif is_rounded:
                 p = op.params
                 l = float(p.get("length", 20))
                 w = float(p.get("width", 20))
                 h = float(p.get("height", 10))
-                r = float(p.get("fillet_r", min(l, w, h) * 0.1))
                 prim = f"cq.Workplane('XY').box({l}, {w}, {h})"
                 lines.append(f"{var} = {prim}")
             else:
                 prim = _build_primitive_expr(op.shape, op.params)
                 lines.append(f"{var} = {prim}")
 
-            # Apply shape-level rotation (from op.rotation) — as separate statement
-            # (works for both single-expr and multi-line curve_prism)
+            # Apply rotations and translations
             if op.rotation:
                 rx, ry, rz = (op.rotation + [0.0, 0.0, 0.0])[:3]
-                if rx:
-                    lines.append(f"{var} = {var}.rotate((0,0,0), (1,0,0), {rx})")
-                if ry:
-                    lines.append(f"{var} = {var}.rotate((0,0,0), (0,1,0), {ry})")
-                if rz:
-                    lines.append(f"{var} = {var}.rotate((0,0,0), (0,0,1), {rz})")
+                if rx: lines.append(f"{var} = {var}.rotate((0,0,0), (1,0,0), {rx})")
+                if ry: lines.append(f"{var} = {var}.rotate((0,0,0), (0,1,0), {ry})")
+                if rz: lines.append(f"{var} = {var}.rotate((0,0,0), (0,0,1), {rz})")
 
-            # Apply Z-rotation for copy symmetry
             if copy_angle is not None and copy_angle != 0:
                 lines.append(f"{var} = {var}.rotate((0,0,0), (0,0,1), {copy_angle:.3f})")
 
-            # Compute translated position (rotate position vector for copies)
             px, py, pz = (op.position + [0.0, 0.0, 0.0])[:3]
             if copy_angle is not None and copy_angle != 0:
                 px, py = _rotate_position(px, py, copy_angle)
@@ -376,40 +376,49 @@ def build_cadquery_script(obj: DecomposedObject) -> str:
             if abs(px) > 1e-6 or abs(py) > 1e-6 or abs(pz) > 1e-6:
                 lines.append(f"{var} = {var}.translate(({px:.3f}, {py:.3f}, {pz:.3f}))")
 
-            # For rounded_box, add fillet in try/except on next lines
             if is_rounded:
                 r = float(op.params.get("fillet_r", 2.0))
-                lines.append(f"try:")
-                lines.append(f"    {var} = {var}.edges().fillet({r})")
-                lines.append(f"except Exception:")
-                lines.append(f"    pass  # fillet failed, keeping sharp edges")
-                rounded_vars.append(var)
+                lines.append(f"try: {var} = {var}.edges().fillet({r})\nexcept: pass")
 
-            # Apply CSG operation
-            if op.op == "add":
-                if not result_set:
-                    lines.append(f"result = {var}")
-                    result_set = True
-                else:
-                    lines.append(f"result = result.union({var})")
-            elif op.op == "subtract":
-                if result_set:
-                    lines.append(f"result = result.cut({var})")
-                else:
-                    logger.warning("Subtract before any add operation — skipping")
-            elif op.op == "intersect":
-                if result_set:
-                    lines.append(f"result = result.intersect({var})")
-                else:
-                    logger.warning("Intersect before any add operation — skipping")
+    # Combine parts and show them
+    lines.append("\n# Final Assembly & Component Display")
+    lines.append("result = cq.Workplane('XY')")
+    result_set = False
 
-    # Safety fallback
+    for i, (label, vars_with_ops) in enumerate(parts.items()):
+        if not vars_with_ops: continue
+        
+        comp_var = f"part_{label}"
+        color = COLOR_PALETTE[i % len(COLOR_PALETTE)]
+        
+        # Initialize component with first 'add' operation or empty workplane
+        adds = [v for v, o in vars_with_ops if o == "add"]
+        subs = [v for v, o in vars_with_ops if o == "subtract"]
+        
+        if adds:
+            lines.append(f"{comp_var} = {adds[0]}")
+            for v in adds[1:]:
+                lines.append(f"{comp_var} = {comp_var}.union({v})")
+            
+            # Now subtraction from this specific component
+            for v in subs:
+                lines.append(f"{comp_var} = {comp_var}.cut({v})")
+        else:
+            # Only subtractions — create an empty piece to cut from? 
+            # Or just skip if nothing to cut from.
+            continue
+        
+        lines.append(f"show_object({comp_var}, name='{label}', options={{'color': '{color}'}})")
+
+        # Add to master result
+        if not result_set:
+            lines.append(f"result = {comp_var}")
+            result_set = True
+        else:
+            lines.append(f"result = result.union({comp_var})")
+
     if not result_set:
-        lines.append("# Fallback: no valid add operations found")
-        lines.append("result = cq.Workplane('XY').box(50, 50, 20)")
-
-    lines.append("")
-    lines.append("show_object(result)")
+        lines.append("result = cq.Workplane('XY').box(1, 1, 1)")
 
     return "\n".join(lines)
 
@@ -454,17 +463,17 @@ if __name__ == "__main__":
         dims_are_estimated=True,
         operations=[
             # Central hub
-            CSGOperation(op="add", shape="cylinder",
+            CSGOperation(op="add", shape="cylinder", label="hub",
                          params={"radius": 12, "height": 8}, position=[0, 0, 0]),
             # Central bearing hole
-            CSGOperation(op="subtract", shape="cylinder",
+            CSGOperation(op="subtract", shape="cylinder", label="bearing_hole",
                          params={"radius": 7, "height": 8}, position=[0, 0, 0]),
             # Three arms
-            CSGOperation(op="add", shape="cylinder",
+            CSGOperation(op="add", shape="cylinder", label="arms",
                          params={"radius": 8, "height": 8}, position=[25, 0, 0],
                          copies=3, copy_angle_step=120.0),
             # Bearing holes in arm tips
-            CSGOperation(op="subtract", shape="cylinder",
+            CSGOperation(op="subtract", shape="cylinder", label="tip_holes",
                          params={"radius": 5, "height": 8}, position=[25, 0, 0],
                          copies=3, copy_angle_step=120.0),
         ],
