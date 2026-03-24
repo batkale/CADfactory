@@ -310,6 +310,7 @@ async def run_precision_pipeline(
             tol_class=spec.tolerance_class,
             confidence=spec.confidence,
             object_name=spec.object_name,
+            aesthetic_class=getattr(decomposed, 'aesthetic_class', 'mechanical'),
         )
         l7_lines = layer7_script.count("\n") + 1
         reports.append(LayerReport(

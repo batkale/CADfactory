@@ -26,6 +26,14 @@ OUTPUT_DIR = os.environ.get("CADFACTORY_OUTPUT_DIR", "generated_files")
 EXECUTION_TIMEOUT = int(os.environ.get("CADQUERY_TIMEOUT", "60"))
 MAX_SCRIPT_LENGTH = 10_000  # characters
 
+# Python executable for CadQuery scripts — needs OCP bindings (Python 3.12)
+# Falls back to sys.executable if env var not set
+CADQUERY_PYTHON = os.environ.get(
+    "CADQUERY_PYTHON",
+    shutil.which("python3.12")
+    or r"C:\Users\alper\AppData\Local\Programs\Python\Python312\python.exe"
+)
+
 
 @dataclass
 class ExecutionResult:
@@ -37,6 +45,7 @@ class ExecutionResult:
     stdout: Optional[str] = None
     execution_time_s: float = 0.0
     parts: List[dict] = field(default_factory=list) # [{"name": "...", "stl_path": "..."}]
+    quality_warnings: List[str] = field(default_factory=list)
 
 
 def execute_cadquery_sandboxed(
@@ -94,10 +103,9 @@ def execute_cadquery_sandboxed(
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(exec_script)
         
-        import sys
         try:
             result = subprocess.run(
-                [sys.executable, script_path],
+                [CADQUERY_PYTHON, script_path],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -150,8 +158,9 @@ def execute_cadquery_sandboxed(
             
             logger.info(f"CadQuery script succeeded ({elapsed:.1f}s): {final_stl}")
             
-            # Parse parts manifest from stdout
+            # Parse parts manifest and quality warnings from stdout
             parts_list = []
+            quality_warnings = []
             if result.stdout:
                 for line in result.stdout.split("\n"):
                     if line.startswith("__MANIFEST__:"):
@@ -168,6 +177,9 @@ def execute_cadquery_sandboxed(
                                     })
                         except Exception as e:
                             logger.warning(f"Failed to parse parts manifest: {e}")
+                    elif line.startswith("__QUALITY_WARN__:"):
+                        quality_warnings.append(line.replace("__QUALITY_WARN__:", ""))
+                        logger.warning(f"Geometry quality warning: {line}")
 
             return ExecutionResult(
                 success=True,
@@ -175,7 +187,8 @@ def execute_cadquery_sandboxed(
                 step_path=final_step if (final_step and os.path.exists(final_step)) else None,
                 stdout=result.stdout,
                 execution_time_s=elapsed,
-                parts=parts_list
+                parts=parts_list,
+                quality_warnings=quality_warnings
             )
             
         except subprocess.TimeoutExpired:
@@ -258,8 +271,21 @@ def show_object(obj, name=None, options=None):
     
     clean_script = "\n".join(filtered_lines)
     
-    # Export commands — high quality mesh
+    # Quality analysis + Export commands — high quality mesh
     export_block = f"""
+
+# === Auto-injected quality analysis ===
+try:
+    _val = result.val()
+    _solids = _val.Solids() if hasattr(_val, 'Solids') else [_val]
+    if len(_solids) > 1:
+        print(f"__QUALITY_WARN__:DISCONNECTED_BODIES:{{len(_solids)}}")
+    _bb = _val.BoundingBox()
+    _dims = sorted([_bb.xlen, _bb.ylen, _bb.zlen])
+    if _dims[0] > 0.01 and _dims[2] / _dims[0] > 20:
+        print(f"__QUALITY_WARN__:EXTREME_ASPECT_RATIO:{{_dims[2]/_dims[0]:.1f}}")
+except:
+    pass
 
 # === Auto-injected export ===
 try:

@@ -18,6 +18,8 @@ from config.prompts import (
     build_system_prompt, build_system_prompt_with_examples,
     RETRY_PROMPT_TEMPLATE, LOAD_SUGGESTION_PROMPT,
     REFINE_SYSTEM_PROMPT, DESIGN_PLAN_PROMPT, DESIGN_PLAN_TO_CODE_TEMPLATE,
+    QUALITY_ENHANCE_PROMPT, QUALITY_RETRY_PROMPT,
+    SHAPE_RESEARCH_PROMPT, SHAPE_RESEARCH_PROMPT_TO_PLAN, SHAPE_RESEARCH_INJECTION,
 )
 from services.script_utils import extract_python_code, validate_script, parse_json_response
 from services.cadquery_runner import execute_cadquery_sandboxed, ExecutionResult
@@ -205,19 +207,43 @@ def check_complexity(description: str) -> Optional[str]:
     return None  # Complexity is OK
 
 
+def research_shape(description: str) -> Optional[str]:
+    """
+    Ask AI to describe the standard physical form of an object.
+    Returns a concise geometric description, or None if no standard form.
+    """
+    prompt = SHAPE_RESEARCH_PROMPT.format(description=description)
+    try:
+        result = _generate_content(MODEL_FLASH, "", prompt)
+        if result and "NO_STANDARD_FORM" not in result:
+            logger.info(f"Shape research for '{description[:50]}': {result[:120]}...")
+            return result.strip()
+        logger.info(f"Shape research: no standard form for '{description[:50]}'")
+    except Exception as e:
+        logger.warning(f"Shape research failed (non-fatal): {e}")
+    return None
+
+
 async def generate_script(
     description: str,
     manufacturing_method: str = "fdm",
     constraints: Optional[dict] = None,
+    shape_research: Optional[str] = None,
 ) -> str:
     """
-    Two-pass generation:
-      Pass 1 — Flash produces a structured JSON design plan (no code).
+    Three-pass generation:
+      Pass 0 — Flash researches the standard physical form of the object.
+      Pass 1 — Flash produces a structured JSON design plan (no code),
+               informed by shape research.
       Pass 2 — Pro takes that plan + system prompt examples and writes CadQuery code.
     Falls back to single-pass if planning fails.
     """
     import json
     from services import rag_store
+
+    # ── Pass 0: Shape research (if not already provided) ──────────────────────
+    if shape_research is None:
+        shape_research = research_shape(description)
 
     # ── RAG: fetch similar approved examples ──────────────────────────────────
     rag_examples = []
@@ -240,7 +266,14 @@ async def generate_script(
     logger.info(f"Pass 1 — design planning: {description[:80]}...")
     plan_json = None
     try:
-        raw_plan = _generate_content(MODEL_FLASH, DESIGN_PLAN_PROMPT, plan_user_msg)
+        # Use shape-research-aware planning prompt if we have research
+        planning_prompt = DESIGN_PLAN_PROMPT
+        if shape_research:
+            planning_prompt = SHAPE_RESEARCH_PROMPT_TO_PLAN.format(
+                shape_research=shape_research
+            )
+
+        raw_plan = _generate_content(MODEL_FLASH, planning_prompt, plan_user_msg)
         plan_json = parse_json_response(raw_plan)
         if plan_json:
             logger.info(f"Pass 1 plan: {json.dumps(plan_json)[:200]}")
@@ -261,10 +294,19 @@ async def generate_script(
             manufacturing_method=manufacturing_method,
             constraints=constraints_str,
         )
+        # Inject shape research into code gen so Pro knows what the object looks like
+        if shape_research:
+            user_message += "\n\n" + SHAPE_RESEARCH_INJECTION.format(
+                shape_research=shape_research
+            )
         logger.info("Pass 2 — code generation from plan...")
     else:
-        # Single-pass fallback
+        # Single-pass fallback — still inject shape research
         user_message = f"Generate a CadQuery script for: {description}"
+        if shape_research:
+            user_message += "\n\n" + SHAPE_RESEARCH_INJECTION.format(
+                shape_research=shape_research
+            )
         if constraints:
             constraint_lines = [f"  - {k}: {v}" for k, v in constraints.items()]
             user_message += "\n\nDimensional constraints:\n" + "\n".join(constraint_lines)
@@ -351,7 +393,43 @@ async def generate_and_execute(
             total_time_s=total_time
         )
 
-    # Step 5: Extract BOM suggestions from the working script
+    # Step 5: Quality check — retry if geometry has disconnected bodies
+    if result.quality_warnings:
+        disconnected = any("DISCONNECTED_BODIES" in w for w in result.quality_warnings)
+        if disconnected:
+            logger.warning("Geometry has disconnected bodies — entering quality retry")
+            quality_error = QUALITY_RETRY_PROMPT.format(script=script)
+            script, result, q_attempts = await _retry_with_errors(
+                description=description,
+                manufacturing_method=manufacturing_method,
+                constraints=constraints,
+                script=script,
+                error=quality_error,
+            )
+            attempts += q_attempts
+            all_warnings.append("Quality retry: fixed disconnected bodies")
+
+    if not result.success:
+        return GenerationResult(
+            success=False,
+            script=script,
+            error=result.error,
+            warnings=all_warnings,
+            attempts=attempts,
+            total_time_s=time.time() - start_time
+        )
+
+    # Step 6: Auto-enhance pass — add fillets/grooves/bearing details to working script
+    try:
+        enhanced = await _enhance_quality(script, manufacturing_method)
+        if enhanced is not None:
+            script = enhanced
+            all_warnings.append("Quality enhancement pass applied")
+            logger.info("Quality enhancement pass succeeded")
+    except Exception as e:
+        logger.warning(f"Quality enhancement failed (non-fatal): {e}")
+
+    # Step 7: Extract BOM suggestions from the working script
     bom = extract_bom_from_script(script)
 
     return GenerationResult(
@@ -362,7 +440,7 @@ async def generate_and_execute(
         bom_suggestion=bom,
         warnings=all_warnings,
         attempts=attempts,
-        total_time_s=total_time
+        total_time_s=time.time() - start_time
     )
 
 
@@ -431,6 +509,43 @@ async def _retry_with_errors(
         error=f"Failed after {MAX_RETRIES + 1} attempts. Last error: {current_error}"
     )
     return current_script, final_result, MAX_RETRIES + 1
+
+
+async def _enhance_quality(
+    script: str,
+    manufacturing_method: str = "fdm",
+) -> Optional[str]:
+    """
+    Quality enhancement pass: send a working script to Gemini to add fillets,
+    grooves, bearing details, and other professional finishing touches.
+    Returns the enhanced script if it also executes successfully, else None.
+    """
+    system_prompt = build_system_prompt(manufacturing_method)
+    enhance_msg = QUALITY_ENHANCE_PROMPT.format(script=script)
+
+    try:
+        raw_text = _generate_content(MODEL_FLASH, system_prompt, enhance_msg)
+        enhanced_script = extract_python_code(raw_text)
+    except Exception as e:
+        logger.warning(f"Quality enhance generation failed: {e}")
+        return None
+
+    if not enhanced_script:
+        return None
+
+    # Validate before execution
+    is_valid, _ = validate_script(enhanced_script)
+    if not is_valid:
+        logger.warning("Enhanced script failed validation — keeping original")
+        return None
+
+    # Execute — only accept if it succeeds
+    result = execute_cadquery_sandboxed(enhanced_script)
+    if result.success:
+        return enhanced_script
+
+    logger.warning(f"Enhanced script failed execution — keeping original: {result.error[:100] if result.error else 'unknown'}")
+    return None
 
 
 async def refine_script(

@@ -35,6 +35,7 @@ class DecomposedObject(BaseModel):
     object_name: str
     real_world_reference: str
     symmetry: Optional[str] = None
+    aesthetic_class: Literal["mechanical", "consumer", "decorative"] = "mechanical"
     estimated_dimensions: dict = Field(default_factory=dict)
     template_name: Optional[str] = None  # bolt, enclosure, bracket, plate_with_holes
     template_params: dict = Field(default_factory=dict)
@@ -242,11 +243,19 @@ STEP 6 — CONFIDENCE
 ════════════════════════════════════════════════════════════════════════════════
 Rate 0.0–1.0. If < 0.8, set clarification_needed=true.
 
+STEP 7 — AESTHETIC CLASSIFICATION
+Classify the part's aesthetic intent to determine finishing level:
+  - "mechanical": brackets, mounts, plates, structural parts → minimal fillets
+  - "consumer": fidget spinners, phone cases, handles, toys, bottle openers → fillets on all
+    visible edges, smooth transitions, bearing recesses with concentric detail grooves
+  - "decorative": ornaments, display pieces, pendants → maximum detail and organic curves
+
 Return ONLY valid JSON, nothing else:
 {
   "object_name": "short descriptive name",
   "real_world_reference": "common engineering name",
   "symmetry": "3-fold rotational | bilateral | none | null",
+  "aesthetic_class": "mechanical | consumer | decorative",
   "estimated_dimensions": {"key": value_mm},
   "dims_are_estimated": true,
   "operations": [
@@ -352,10 +361,15 @@ def decompose_prompt(
     raw_modifiers = data.get("modifiers") or []
     modifiers = [str(m) for m in raw_modifiers]
 
+    # Parse aesthetic class with fallback to "mechanical"
+    raw_aesthetic = str(data.get("aesthetic_class", "mechanical")).lower().strip()
+    aesthetic_class = raw_aesthetic if raw_aesthetic in ("mechanical", "consumer", "decorative") else "mechanical"
+
     return DecomposedObject(
         object_name=str(data.get("object_name", "Unknown Part")),
         real_world_reference=str(data.get("real_world_reference", ""))[:100],  # type: ignore
         symmetry=data.get("symmetry"),
+        aesthetic_class=aesthetic_class,
         estimated_dimensions=data.get("estimated_dimensions") or {},
         dims_are_estimated=bool(data.get("dims_are_estimated", True)),
         operations=operations,

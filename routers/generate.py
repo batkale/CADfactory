@@ -34,11 +34,12 @@ from config.prompts import (
     DESIGN_PLAN_PROMPT, DESIGN_PLAN_TO_CODE_TEMPLATE,
     RETRY_PROMPT_TEMPLATE, build_system_prompt, build_system_prompt_with_examples,
     STEP_IMPORT_SYSTEM_PROMPT, REFINE_SYSTEM_PROMPT,
+    SHAPE_RESEARCH_PROMPT_TO_PLAN, SHAPE_RESEARCH_INJECTION,
 )
 from services.claude_cad import (
     generate_and_execute, refine_script, suggest_load_cases,
     _generate_content, MODEL_FLASH, MODEL_PRO, check_complexity, MAX_RETRIES,
-    generate_with_tuned_model,
+    generate_with_tuned_model, research_shape,
 )
 from services.semantic_decomposer import decompose_prompt, DecomposedObject
 from services.csg_builder import build_from_prompt_result
@@ -49,6 +50,7 @@ from services.script_utils import (
     validate_script, extract_bom_from_script,
     parse_json_response, extract_python_code,
 )
+from services.fine_tuner import get_active_tuned_model
 from database import get_db, SessionLocal
 import models
 
@@ -77,6 +79,10 @@ class GenerateRequest(BaseModel):
     constraints: Optional[dict] = Field(
         default=None,
         examples=[{"width": 40, "height": 30, "wall_thickness": 3}]
+    )
+    force: bool = Field(
+        default=False,
+        description="Force generation even when the prompt is vague"
     )
 
 
@@ -511,16 +517,17 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
                                 "label": "Understanding your description...",
                                 "done": True})
 
-        # If the AI is unsure, ask for clarification instead of guessing
+        # If the AI is unsure, warn but allow generation to continue
         if decomposed.clarification_needed and decomposed.confidence < 0.5:
-            yield sse("result", {
-                "success": False,
-                "pipeline": "needs_clarification",
-                "confidence": decomposed.confidence,
-                "object_name": decomposed.object_name,
-                "error": decomposed.clarification_question or "Could you describe the shape in more detail?",
-            })
-            return
+            if not req.force:
+                yield sse("clarification", {
+                    "confidence": decomposed.confidence,
+                    "object_name": decomposed.object_name,
+                    "question": decomposed.clarification_question or "Could you describe the shape in more detail?",
+                })
+                return
+            else:
+                all_warnings.append(f"Weak prompt (confidence {decomposed.confidence:.0%}) — generating anyway")
 
         # Try CSG builder path if confidence is sufficient
         csg_result = None
@@ -653,6 +660,19 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
             else:
                 logger.info(f"Tuned model generation failed — falling back to base AI pipeline")
 
+        # ── Stage 1.9: Shape Research — AI describes the standard form ─────────
+        yield sse("progress", {"stage": "planning",
+                                "label": "Researching object shape...",
+                                "done": False})
+
+        shape_research = None
+        try:
+            shape_research = await asyncio.to_thread(research_shape, req.description)
+            if shape_research:
+                logger.info(f"Shape research: {shape_research[:120]}...")
+        except Exception as e:
+            logger.warning(f"Shape research failed (non-fatal): {e}")
+
         # ── Stage 2: Planning — Flash builds a JSON design plan ───────────────
         yield sse("progress", {"stage": "planning",
                                 "label": "Designing geometry...",
@@ -666,8 +686,15 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
         plan_user_msg += f"\n\nManufacturing method: {req.manufacturing_method}"
 
         try:
+            # Use shape-research-aware planning prompt if research succeeded
+            planning_prompt = DESIGN_PLAN_PROMPT
+            if shape_research:
+                planning_prompt = SHAPE_RESEARCH_PROMPT_TO_PLAN.format(
+                    shape_research=shape_research
+                )
+
             raw_plan = await asyncio.to_thread(
-                _generate_content, MODEL_FLASH, DESIGN_PLAN_PROMPT, plan_user_msg
+                _generate_content, MODEL_FLASH, planning_prompt, plan_user_msg
             )
             plan_json = parse_json_response(raw_plan)
         except Exception as e:
@@ -680,7 +707,7 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
         # ── Stage 3: Code generation — Pro writes CadQuery from the plan ──────
         yield sse("progress", {"stage": "generating",
                                 "label": "Generating CadQuery script...",
-                                "done": True})
+                                "done": False})
 
         # ── Stage 4: Prompt Construction with RAG ───────────────────────────
         system_prompt = build_system_prompt_with_examples(req.manufacturing_method, rag_examples)
@@ -695,8 +722,17 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
                 manufacturing_method=req.manufacturing_method,
                 constraints=constraints_str,
             )
+            # Inject shape research so code gen knows what the object looks like
+            if shape_research:
+                user_message += "\n\n" + SHAPE_RESEARCH_INJECTION.format(
+                    shape_research=shape_research
+                )
         else:
             user_message = f"Generate a CadQuery script for: {req.description}"
+            if shape_research:
+                user_message += "\n\n" + SHAPE_RESEARCH_INJECTION.format(
+                    shape_research=shape_research
+                )
             if req.constraints:
                 cl = [f"  - {k}: {v}" for k, v in req.constraints.items()]
                 user_message += "\n\nDimensional constraints:\n" + "\n".join(cl)

@@ -215,6 +215,7 @@ def build_granular_script(
     tol_class: str = "IT7",
     confidence: float = 0.8,
     object_name: str = "Part",
+    aesthetic_class: str = "mechanical",
 ) -> str:
     """
     Layer 7: Generate a hyper-detailed, parametric CadQuery script.
@@ -508,15 +509,37 @@ def build_granular_script(
     # ── Global finish pass ─────────────────────────────────────────────────
     ext_r = spec.fillet_r_external if spec else ext_fillet
     int_r = spec.fillet_r_internal if spec else 0
-    if ext_r > 0:
+
+    is_aesthetic = aesthetic_class in ("consumer", "decorative")
+
+    if ext_r > 0 or is_aesthetic:
+        fillet_r = ext_r if ext_r > 0 else 2.0
         lines.append("# ─── Global finish: external edge softening ────────────────────────")
-        lines.append(f"try: result = result.edges('|Z').fillet({ext_r})")
-        lines.append("except Exception: pass  # fillet skipped if geometry prevents it")
-        if int_r > 0:
-            lines.append(
-                "try: result = result.faces('<Z').edges().chamfer(0.5)  # base lip"
-            )
-            lines.append("except Exception: pass")
+        lines.append(f"try: result = result.edges('|Z').fillet({fillet_r})")
+        lines.append(f"except Exception:")
+        lines.append(f"    try: result = result.edges('|Z').chamfer({fillet_r * 0.5})")
+        lines.append(f"    except Exception: pass  # fillet+chamfer skipped")
+
+        # Bottom chamfer for all parts
+        lines.append(
+            "try: result = result.faces('<Z').edges().chamfer(0.5)  # base lip"
+        )
+        lines.append("except Exception: pass")
+
+        # Extra finishing for consumer/decorative parts
+        if is_aesthetic:
+            lines.append("")
+            lines.append(f"# ─── Aesthetic finish ({aesthetic_class}) ─────────────────────────────")
+            lines.append("# Top face concentric detail groove")
+            lines.append("try:")
+            lines.append("    _bb = result.val().BoundingBox()")
+            lines.append("    _max_r = min(_bb.xlen, _bb.ylen) / 2.0 * 0.6")
+            lines.append("    if _max_r > 3.0:")
+            lines.append("        _groove = cq.Workplane('XY').circle(_max_r + 0.4).circle(_max_r).extrude(0.4)")
+            lines.append("        _groove = _groove.translate((0, 0, _bb.zmax - 0.4))")
+            lines.append("        result = result.cut(_groove)")
+            lines.append("except Exception: pass  # aesthetic groove skipped")
+
         lines.append("")
 
     lines.append("show_object(result)")

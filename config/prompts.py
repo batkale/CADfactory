@@ -18,11 +18,18 @@ RULES:
 1. Always use millimeters for all dimensions.
 2. Always assign the final shape to a variable called `result`.
 3. Add `show_object(result)` as the last line.
-4. Only import `cadquery` — no other external libraries (no numpy, no math).
+4. Only import `cadquery` and Python's built-in `math` — never import numpy or other third-party libraries.
 5. All dimension values must be plain Python floats or ints (e.g. 12.5, not np.float64). Never pass computed values without wrapping in float().
-5. Keep scripts SIMPLE. Under 40 lines is ideal.
-6. NO fillets unless explicitly requested. Chamfers are safer.
-7. If you add fillets, ALWAYS wrap in try/except.
+5. Keep scripts clear and correct. Under 80 lines is ideal. Prefer quality over brevity.
+6. ADD fillets (1-3 mm) to visible edges for professional appearance. ALWAYS wrap in try/except with chamfer fallback:
+   try:
+       result = result.edges("|Z").fillet(2.0)
+   except:
+       try:
+           result = result.edges("|Z").chamfer(1.0)
+       except:
+           pass
+7. Fillets MUST always be wrapped in try/except — never bare.
 8. Clearance fits: add 0.1–0.2 mm clearance for press fits, 0.3–0.5 mm for sliding fits.
 9. Wall thickness: minimum 1.2 mm for FDM, 0.8 mm for SLA. Never go thinner.
 10. Structural holes: always model exact ISO metric sizes (M3=3.2 mm, M4=4.2 mm, etc.).
@@ -91,6 +98,20 @@ ASSEMBLY & MECHANICAL OVERLAP RULES:
 2. RADIAL SYMMETRY: For fans, spinners, and wheels, use `polarArray` or manually rotate and union. The center of rotation must be the origin (0,0,0).
 3. BEARING SEATS: Standard 608 bearings are 22mm OD. Use `hole(22.1)` for a slip fit or `hole(22.0)` for a press fit.
 4. DISCONNECTED PARTS: A single `show_object(result)` representing multiple disconnected solids is a failure. Always union components into a single manifold solid unless multiple parts are explicitly requested.
+
+AESTHETIC QUALITY RULES — apply these to ALL consumer and decorative parts:
+1. Consumer/decorative parts (spinners, phone cases, bottle openers, toys, handles) MUST have
+   fillets (1-3 mm) on visible edges. Always try/except with chamfer fallback.
+2. Bearing seats: use a stepped recess — bore at bearing OD (22.1 mm for 608), plus a 1 mm-deep
+   lip at OD + 2 mm for a retaining shoulder.
+3. Hub faces: add at least one concentric detail groove (0.3-0.5 mm deep cutBlind) for visual
+   refinement. Pattern: `.faces(">Z").workplane().circle(r).cutBlind(-0.4)`
+4. Arms connecting to hubs: taper wider at the hub connection for visual flow and structural
+   strength. An arm that is 8 mm wide at the tip should be 12 mm wide where it meets the hub.
+5. Fillet union seams (2-3 mm) to hide boolean join lines between unioned bodies.
+6. Radially symmetric parts: ensure smooth transitions — no abrupt diameter changes without
+   a fillet or chamfer to ease the visual step.
+7. Bottom edges: add a small chamfer (0.5-1 mm) for print bed release and visual finish.
 
 WORKING EXAMPLES — copy these patterns exactly:
 
@@ -395,7 +416,110 @@ WHEN TO USE makeCylinder+makeSphere arc pattern:
 - Any part where a circular arc connects two straight sections
 - Whenever you would be tempted to use revolve for a hook/ring shape
 
-Example 12: Hex socket head cap screw (bolt / fastener / screw)
+Example 12: Professional fidget spinner (smooth organic LOFTED arms, bearing seats, fillets)
+For spinners, fans, propellers, or any radial design — use .loft() for SMOOTH ORGANIC arms.
+The loft creates an elliptical cross-section that tapers from hub to lobe — this is what makes
+professional CAD models look smooth instead of polygonal. NEVER use Wire.makePolygon for arms
+when organic flow is needed. ALWAYS fillet union seams.
+```
+import cadquery as cq
+import math
+
+T       = 7.0      # body thickness
+HUB_R   = 14.0     # hub radius
+LOBE_R  = 13.0     # outer lobe radius
+DIST    = 33.0     # hub-centre to lobe-centre distance
+BEAR_OD = 22.0     # 608 bearing outer diameter
+BEAR_ID = 8.0      # 608 bearing inner diameter
+RECESS_D = 1.2     # bearing lip recess depth
+LIP_OD  = 24.0     # retaining lip outer diameter
+
+# ── Hub ──
+result = cq.Workplane("XY").circle(HUB_R).extrude(T)
+
+# ── Lobes + smooth LOFTED arms ──
+for deg in (0.0, 120.0, 240.0):
+    a  = math.radians(deg)
+    lx = float(DIST * math.cos(a))
+    ly = float(DIST * math.sin(a))
+
+    # Lobe disc
+    lobe = cq.Workplane("XY").center(lx, ly).circle(LOBE_R).extrude(T)
+    result = result.union(lobe)
+
+    # Smooth lofted arm — elliptical cross-section, wider at hub, narrower at lobe
+    dx = float(math.cos(a))
+    dy = float(math.sin(a))
+    h_cx = dx * (HUB_R - 3)   # start inside hub for solid overlap
+    h_cy = dy * (HUB_R - 3)
+    l_cx = lx - dx * (LOBE_R - 3)  # end inside lobe for solid overlap
+    l_cy = ly - dy * (LOBE_R - 3)
+    arm_len = math.sqrt((l_cx - h_cx)**2 + (l_cy - h_cy)**2)
+
+    arm = (cq.Workplane("XY")
+        .transformed(offset=(h_cx, h_cy, 0), rotate=(0, 0, math.degrees(a)))
+        .transformed(rotate=(0, 90, 0))
+        .ellipse(T / 2, 7.0)           # hub end: wider
+        .workplane(offset=arm_len)
+        .ellipse(T / 2, 5.5)           # lobe end: narrower
+        .loft())
+    result = result.union(arm)
+
+# ── Centre bearing seat (stepped recess + bore) ──
+result = result.cut(cq.Workplane("XY").circle(BEAR_OD / 2 + 0.1).extrude(T))
+# Top lip recess
+lip_t = cq.Workplane("XY").workplane(offset=T - RECESS_D).circle(LIP_OD / 2).circle(BEAR_OD / 2 + 0.1).extrude(RECESS_D)
+result = result.cut(lip_t)
+# Bottom lip recess
+lip_b = cq.Workplane("XY").circle(LIP_OD / 2).circle(BEAR_OD / 2 + 0.1).extrude(RECESS_D)
+result = result.cut(lip_b)
+
+# ── Lobe bearing seats ──
+for deg in (0.0, 120.0, 240.0):
+    a  = math.radians(deg)
+    lx = float(DIST * math.cos(a))
+    ly = float(DIST * math.sin(a))
+    result = result.cut(cq.Workplane("XY").center(lx, ly).circle(BEAR_OD / 2 + 0.1).extrude(T))
+    lr_t = cq.Workplane("XY").workplane(offset=T - RECESS_D).center(lx, ly).circle(LIP_OD / 2).circle(BEAR_OD / 2 + 0.1).extrude(RECESS_D)
+    result = result.cut(lr_t)
+    lr_b = cq.Workplane("XY").center(lx, ly).circle(LIP_OD / 2).circle(BEAR_OD / 2 + 0.1).extrude(RECESS_D)
+    result = result.cut(lr_b)
+
+# ── Concentric decorative grooves (top face) ──
+for r in [HUB_R - 2.5, HUB_R - 4.0]:
+    g = cq.Workplane("XY").workplane(offset=T - 0.35).circle(r + 0.4).circle(r).extrude(0.35)
+    result = result.cut(g)
+
+# ── Fillets for smooth organic look ──
+try:
+    result = result.edges("|Z").fillet(2.0)
+except:
+    try:
+        result = result.edges("|Z").fillet(1.2)
+    except:
+        try:
+            result = result.edges("|Z").chamfer(1.0)
+        except:
+            pass
+try:
+    result = result.edges("<Z").chamfer(0.5)
+except:
+    pass
+
+show_object(result)
+```
+
+WHEN TO USE .loft() for arms (PREFERRED for organic shapes):
+- Fidget spinners, fans, propellers, impellers — anything with smooth flowing arms
+- Creates elliptical cross-sections that taper naturally — looks professional
+- Pattern: .transformed(offset, rotate) → .ellipse(h, w) → .workplane(offset=length) → .ellipse(h2, w2) → .loft()
+- Start/end points MUST overlap hub/lobe by 2-3 mm for solid boolean union
+
+WHEN TO USE Wire.makePolygon for arms (FALLBACK for flat/angular shapes):
+- Only when you need sharp-edged trapezoidal arms (industrial/mechanical look)
+- Brackets, flat plates, structural members where organic flow is not desired
+
+Example 13: Hex socket head cap screw (bolt / fastener / screw)
 Thread geometry is simplified — represented as a plain cylinder (slicer/toolpath adds thread).
 NEVER call .thread(), .addThread(), or any non-existent method.
 ```
@@ -420,6 +544,52 @@ result = result.faces(">Z").workplane().polygon(6, sock).cutBlind(-sock_d)
 
 show_object(result)
 ```
+
+Example 14: Quality finishing patterns (bearing pocket, concentric grooves, fillets)
+Apply these patterns to ANY part that needs professional finish. Reuse them freely.
+```
+import cadquery as cq
+
+# Base cylinder to demonstrate finishing on
+result = cq.Workplane("XY").circle(25).extrude(10)
+
+# ── Stepped bearing pocket (608 bearing: 22mm OD, 8mm ID, 7mm thick) ──
+# Retaining lip: shallow recess wider than bearing
+lip = cq.Workplane("XY").circle(12.0).extrude(1.5).translate((0, 0, 10 - 1.5))
+result = result.cut(lip)
+# Bearing bore: through-hole at bearing OD + clearance
+bore = cq.Workplane("XY").circle(11.05).extrude(10)
+result = result.cut(bore)
+
+# ── Concentric decorative grooves on top face ──
+for r in [18.0, 15.0]:
+    groove = cq.Workplane("XY").circle(r + 0.5).circle(r).extrude(0.4)
+    groove = groove.translate((0, 0, 10 - 0.4))
+    result = result.cut(groove)
+
+# ── Edge fillets with try/except/chamfer fallback ──
+try:
+    result = result.edges("|Z").fillet(2.0)
+except:
+    try:
+        result = result.edges("|Z").chamfer(1.0)
+    except:
+        pass
+
+# ── Bottom chamfer for print bed release ──
+try:
+    result = result.edges("<Z").chamfer(0.5)
+except:
+    pass
+
+show_object(result)
+```
+
+WHEN TO USE these finishing patterns:
+- Bearing pocket: any part with a press-fit or slip-fit bearing seat (608, 6001, 6200, etc.)
+- Concentric grooves: on any flat hub face, cap, or decorative surface for visual depth
+- Edge fillets: on ALL consumer/decorative parts — ALWAYS try/except with chamfer fallback
+- Bottom chamfer: on ALL 3D-printed parts for easy bed release
 
 FACE SELECTORS (only use these):
   ">Z" = top face, "<Z" = bottom, ">X" = right, "<X" = left, ">Y" = front, "<Y" = back
@@ -541,23 +711,30 @@ You are a senior mechanical CAD design planner at a precision manufacturer.
 Analyse the part description and output a concise design plan in JSON — no code, no markdown.
 
 Think through methodically:
-1. What is the primary base geometry? (box, cylinder, polygon_extrusion)
-2. Exact key dimensions in millimetres — be specific, not vague.
-3. Which features to add and in what order (at most 6, pick structural essentials only).
-4. Which CadQuery selectors are safest (only: >Z <Z >X <X >Y <Y |Z |X |Y).
-5. Are there clearance or fit requirements? (add 0.1–0.5 mm where needed)
+1. What is the primary base geometry? (box, cylinder, polygon_extrusion, revolved_profile)
+2. Classify the aesthetic intent: mechanical (brackets, mounts), consumer (spinners, cases, handles), or decorative (ornaments, display pieces).
+3. Exact key dimensions in millimetres — be specific, not vague.
+4. Structural features (max 4): the core geometry that defines the part shape.
+5. Detail features (max 3): bearing seats, recesses, grooves, pockets that add functional detail.
+6. Finish features (max 3): fillets, chamfers, decorative grooves that make the part look professional.
+   Consumer and decorative parts MUST include at least 2 finish features.
+7. Which CadQuery selectors are safest (only: >Z <Z >X <X >Y <Y |Z |X |Y).
+8. Are there clearance or fit requirements? (add 0.1–0.5 mm where needed)
 
 NEVER plan: .text(), filter_by(), StringSelector, Perimeter(), or complex edge chains.
-NEVER plan more than 6 features — pick the most structurally important ones.
 ALWAYS choose realistic dimensions: a coffee mug is ~80 mm tall, a phone is ~150×75 mm.
 
 Return ONLY valid JSON, no backticks:
 {
   "part_name": "short name",
-  "base": "box|cylinder|polygon_extrusion",
+  "aesthetic_class": "mechanical|consumer|decorative",
+  "base": "box|cylinder|polygon_extrusion|revolved_profile",
   "dims": {"key": value_mm},
   "features": [
-    {"op": "shell|hole|cboreHole|pushPoints_hole|rect_extrude|rect_cut|circle_extrude", "desc": "...", "params": {}}
+    {"op": "shell|hole|cboreHole|pushPoints_hole|rect_extrude|rect_cut|circle_extrude|bearing_pocket|radial_arms|polar_array", "category": "structural|detail|finish", "desc": "...", "params": {}}
+  ],
+  "finish_features": [
+    {"type": "fillet|chamfer|groove|recess", "location": "all_vertical_edges|bottom_edges|top_face|union_seams", "radius_mm": 2.0}
   ],
   "sequence": ["step 1 description", "step 2 description"],
   "notes": "any special CadQuery approach or selector notes"
@@ -572,6 +749,8 @@ Design plan (implement this exactly):
 Manufacturing method: {manufacturing_method}{constraints}
 
 Follow the sequence in the plan. Use only the patterns shown in the system prompt examples.
+IMPORTANT: Implement ALL finish_features from the plan. Wrap every fillet in try/except with
+chamfer fallback. Consumer and decorative parts MUST have smooth, professional edges.
 """
 
 
@@ -585,7 +764,7 @@ Fix it. Rules:
 - Do NOT use .text() — remove any text/label calls entirely
 - Only use simple selectors: ">Z", "<Z", "|Z", etc.
 - Remove ALL fillets if they cause errors
-- Keep the script simple and under 40 lines
+- Keep the script under 80 lines
 - Return ONLY Python code, no markdown
 
 Previous broken script:
@@ -616,6 +795,124 @@ WORKFLOW — before you write code, mentally answer:
 Then output only the modified script.
 
 OUTPUT only valid Python code. No markdown, no explanations, no backticks.
+"""
+
+
+QUALITY_ENHANCE_PROMPT = """
+The CadQuery script below runs correctly and produces valid geometry, but it looks basic
+and lacks professional quality. Enhance it by adding finishing details.
+
+ADD these quality features (only where they make sense for this part):
+1. Fillets (1-3 mm) on visible vertical edges — wrap EACH in try/except with chamfer fallback.
+2. Bearing recesses if the part has bearing seats (stepped bore with retaining lip).
+3. Concentric detail grooves on flat hub/cap faces (0.3-0.5 mm deep annular cuts).
+4. Bottom chamfer (0.5 mm) for print bed release.
+5. Smooth transitions at union seams — fillet the intersection edges.
+
+RULES:
+- Keep the SAME overall shape, dimensions, and structure.
+- Only ADD quality details — do NOT remove any existing geometry.
+- Keep `result` as the final variable and `show_object(result)` as the last line.
+- Every fillet MUST be wrapped in try/except with chamfer fallback.
+- Under 80 lines total.
+- Return ONLY Python code, no markdown.
+
+Script to enhance:
+{script}
+"""
+
+
+QUALITY_RETRY_PROMPT = """
+The script executes without errors BUT produces DISCONNECTED BODIES — multiple separate
+solids instead of one unified part. This is a geometry quality failure.
+
+The most common cause: arms/lobes do not physically overlap the hub/base by enough material.
+When unioning parts, they MUST overlap by at least 0.5 mm.
+
+FIX:
+- Ensure all components overlap before .union() — move arms inward so they penetrate the hub.
+- After all unions, verify the result is a single solid (no floating pieces).
+- Add fillets at union seams to strengthen the join (try/except with chamfer fallback).
+
+Return ONLY the fixed Python code, no markdown.
+
+Previous script with disconnected bodies:
+{script}
+"""
+
+
+SHAPE_RESEARCH_PROMPT = """
+You are a product design encyclopaedia. Given a short object name or description,
+describe the STANDARD, MOST COMMON physical form of that object in precise geometric terms
+that a CAD engineer can model.
+
+Rules:
+- Describe the SINGLE most iconic / universally recognised version of the object.
+  For "fidget spinner" that is the 3-arm bar-style spinner with 608 bearings.
+  For "coffee mug" that is a cylindrical cup with a C-shaped handle.
+- Focus ONLY on geometry: shapes, proportions, radii, symmetry, features, holes, recesses.
+- Include real-world dimensions in millimetres where you know them.
+- Mention standard sub-components (e.g. "uses 608 bearings: 22 mm OD, 8 mm ID, 7 mm thick").
+- Describe the cross-section and profile if relevant.
+- Do NOT describe colour, material, branding, or packaging.
+- Keep it under 150 words — dense and precise.
+- If the object is too abstract or you don't know its standard form, say "NO_STANDARD_FORM".
+
+Object: {description}
+"""
+
+
+SHAPE_RESEARCH_PROMPT_TO_PLAN = """
+You are a senior mechanical CAD design planner at a precision manufacturer.
+Analyse the part description and output a concise design plan in JSON — no code, no markdown.
+
+IMPORTANT CONTEXT — An AI shape researcher has described the standard physical form of this object:
+--- SHAPE RESEARCH ---
+{shape_research}
+--- END SHAPE RESEARCH ---
+
+You MUST follow this shape research closely. It describes what the object ACTUALLY looks like
+in the real world. Your plan must match this standard form.
+
+Think through methodically:
+1. What is the primary base geometry? (box, cylinder, polygon_extrusion, revolved_profile)
+2. Classify the aesthetic intent: mechanical (brackets, mounts), consumer (spinners, cases, handles), or decorative (ornaments, display pieces).
+3. Exact key dimensions in millimetres — use the dimensions from the shape research above.
+4. Structural features (max 4): the core geometry that defines the part shape.
+5. Detail features (max 3): bearing seats, recesses, grooves, pockets that add functional detail.
+6. Finish features (max 3): fillets, chamfers, decorative grooves that make the part look professional.
+   Consumer and decorative parts MUST include at least 2 finish features.
+7. Which CadQuery selectors are safest (only: >Z <Z >X <X >Y <Y |Z |X |Y).
+8. Are there clearance or fit requirements? (add 0.1-0.5 mm where needed)
+
+NEVER plan: .text(), filter_by(), StringSelector, Perimeter(), or complex edge chains.
+ALWAYS choose realistic dimensions from the shape research.
+
+Return ONLY valid JSON, no backticks:
+{{
+  "part_name": "short name",
+  "aesthetic_class": "mechanical|consumer|decorative",
+  "base": "box|cylinder|polygon_extrusion|revolved_profile",
+  "dims": {{"key": value_mm}},
+  "features": [
+    {{"op": "shell|hole|cboreHole|pushPoints_hole|rect_extrude|rect_cut|circle_extrude|bearing_pocket|radial_arms|polar_array", "category": "structural|detail|finish", "desc": "...", "params": {{}}}}
+  ],
+  "finish_features": [
+    {{"type": "fillet|chamfer|groove|recess", "location": "all_vertical_edges|bottom_edges|top_face|union_seams", "radius_mm": 2.0}}
+  ],
+  "sequence": ["step 1 description", "step 2 description"],
+  "notes": "any special CadQuery approach or selector notes"
+}}
+"""
+
+
+SHAPE_RESEARCH_INJECTION = """
+--- SHAPE RESEARCH (what this object looks like in the real world) ---
+{shape_research}
+--- END SHAPE RESEARCH ---
+
+Generate a CadQuery script that matches this standard physical form.
+The script MUST produce geometry that looks like the real-world object described above.
 """
 
 

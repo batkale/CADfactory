@@ -436,6 +436,21 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
         <span id="gen-err-msg" style="color:var(--red);font-size:13px;margin-left:4px"></span>
       </div>
 
+      <!-- Weak prompt clarification warning -->
+      <div id="gen-clarification" class="hidden" style="margin-bottom:12px;border:1px solid var(--amber-border);border-radius:10px;padding:12px 16px;background:var(--amber-bg)">
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px">
+          <span style="font-size:18px;flex-shrink:0">⚠</span>
+          <div>
+            <div style="font-weight:700;color:var(--text);font-size:13px;margin-bottom:2px">Weak Prompt</div>
+            <div id="gen-clarification-msg" style="font-size:12px;color:var(--text3)"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline" onclick="dismissClarification()" style="font-size:12px">Cancel</button>
+          <button class="btn btn-cyan" onclick="forceGenerate()" style="font-size:12px">Generate Anyway</button>
+        </div>
+      </div>
+
       <!-- Template Library -->
       <button class="tpl-toggle" onclick="toggleTemplateLib()">
         <span>📐 Template Library <span style="color:var(--text4);font-weight:400;font-size:11px">— 10 parametric parts, instant generation</span></span>
@@ -3536,6 +3551,30 @@ function showGenErr(msg){
 }
 function hideGenErr(){ $('gen-err').classList.add('hidden'); }
 
+function showClarificationWarning(data){
+  $('gen-loading').classList.add('hidden');
+  $('btn-generate').disabled = false;
+  $('btn-generate').textContent = '🔧 Generate';
+  var msg = data.question || 'Could you describe the shape in more detail?';
+  if(data.confidence !== undefined) msg += ' (confidence: ' + Math.round(data.confidence * 100) + '%)';
+  $('gen-clarification-msg').textContent = msg;
+  $('gen-clarification').classList.remove('hidden');
+}
+
+function dismissClarification(){
+  $('gen-clarification').classList.add('hidden');
+}
+
+async function forceGenerate(){
+  $('gen-clarification').classList.add('hidden');
+  var desc = $('gen-description').value.trim();
+  var method = $('gen-method').value;
+  var constraints = parseConstraints($('gen-constraints').value);
+  var body = { description: desc, manufacturing_method: method, force: true };
+  if(constraints) body.constraints = constraints;
+  await _doGenerate('/api/generate/stream', body);
+}
+
 function parseConstraints(str){
   if(!str || !str.trim()) return null;
   var obj = {};
@@ -3623,6 +3662,7 @@ async function loadStepFiles(){
 
 async function generatePart(){
   hideGenErr();
+  $('gen-clarification').classList.add('hidden');
   var desc = $('gen-description').value.trim();
   if(!desc || desc.length < 5){ showGenErr('Please describe the part you want to generate.'); return; }
 
@@ -3633,6 +3673,23 @@ async function generatePart(){
   genHistory = []; genHistoryIdx = -1;
   $('gen-undoredo-row').style.display = 'none';
 
+  var stepRefId = $('step-ref-select') ? parseInt($('step-ref-select').value) : NaN;
+  var useStepRef = !isNaN(stepRefId) && stepRefId > 0;
+
+  var endpoint, body;
+  if(useStepRef){
+    endpoint = '/api/generate/from-step/stream';
+    body = { file_id: stepRefId, description: desc, manufacturing_method: method };
+  } else {
+    endpoint = '/api/generate/stream';
+    body = { description: desc, manufacturing_method: method };
+    if(constraints) body.constraints = constraints;
+  }
+
+  await _doGenerate(endpoint, body);
+}
+
+async function _doGenerate(endpoint, body){
   $('btn-generate').disabled = true;
   $('btn-generate').textContent = '⏳ Generating...';
   $('gen-loading').classList.remove('hidden');
@@ -3641,19 +3698,6 @@ async function generatePart(){
   resetGenStages();
 
   try {
-    var stepRefId = $('step-ref-select') ? parseInt($('step-ref-select').value) : NaN;
-    var useStepRef = !isNaN(stepRefId) && stepRefId > 0;
-
-    var endpoint, body;
-    if(useStepRef){
-      endpoint = '/api/generate/from-step/stream';
-      body = { file_id: stepRefId, description: desc, manufacturing_method: method };
-    } else {
-      endpoint = '/api/generate/stream';
-      body = { description: desc, manufacturing_method: method };
-      if(constraints) body.constraints = constraints;
-    }
-
     var res = await fetch(API + endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN },
@@ -3687,6 +3731,9 @@ async function generatePart(){
             var data = JSON.parse(line.slice(6));
             if(curEvent === 'progress'){
               updateGenStage(data.stage, data.label, data.done);
+            } else if(curEvent === 'clarification'){
+              showClarificationWarning(data);
+              return;
             } else if(curEvent === 'result'){
               finalData = data;
             }
