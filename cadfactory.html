@@ -262,47 +262,9 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
   overflow: hidden;
   box-shadow: inset 0 2px 10px rgba(0,0,0,0.05);
 }
-.gen-selection-bottombar {
-  width: 100%;
-  min-height: 80px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 12px 20px;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  box-shadow: var(--shadow);
-  transition: all 0.3s ease;
-  z-index: 100;
-}
-.gen-selection-bottombar.empty {
-  opacity: 0.6;
-  justify-content: center;
-}
-.gen-selection-card {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.sel-color-control { 
-  display: flex; align-items: center; gap: 10px; 
-  background: var(--bg3); padding: 5px 12px; 
-  border-radius: 100px; border: 1px solid var(--border2);
-}
-.sel-color-input { 
-  width: 24px; height: 24px; padding: 0; border: none; background: none; 
-  cursor: pointer; border-radius: 50%; overflow: hidden; 
-}
-.sel-color-input::-webkit-color-swatch-wrapper { padding: 0; }
-.sel-color-input::-webkit-color-swatch { border: none; border-radius: 50%; }
-.sel-title { font-size: 14px; font-weight: 800; color: var(--cyan); margin-bottom: 2px; }
-.sel-label { font-size: 10px; color: var(--text4); text-transform: uppercase; letter-spacing: 0.05em; }
-.sel-value { font-size: 12px; font-weight: 600; color: var(--text2); font-family: monospace; }
+/* (Selection sidebar styles removed — now using embedded cadviewer.html) */
 
-@media(max-width:768px){.grid3,.region-grid,.opt-grid,.grid2,.feature-grid,.gen-viewer-container{grid-template-columns:1fr; flex-direction: column; height: auto}.nav-links{display:none}.gen-selection-sidebar{width: 100%; height: auto}}
+@media(max-width:768px){.grid3,.region-grid,.opt-grid,.grid2,.feature-grid,.gen-viewer-container{grid-template-columns:1fr; flex-direction: column; height: auto}.nav-links{display:none}}
 </style>
 </head>
 <body>
@@ -319,6 +281,7 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
       <button class="nav-link inactive" id="nav-assembly" onclick="openAssembly()">Assembly</button>
       <button class="nav-link inactive" id="nav-topology" onclick="openTopology()">Topology</button>
       <button class="nav-link inactive" id="nav-about" onclick="setPage('about')">Our Aim</button>
+      <button class="nav-link inactive" id="nav-viewer" onclick="window.open(window.location.protocol==='file:'?'cadviewer.html':'/viewer','_blank')">CAD Viewer</button>
     </div>
   </div>
   <div style="display:flex;gap:8px;align-items:center">
@@ -546,29 +509,19 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
           </div>
         </div>
 
-          <!-- 3D AREA (Stacked) -->
+          <!-- 3D Preview (embedded CAD Viewer) -->
           <div class="gen-viewer-container">
-            <div id="gen-viewer-wrap" class="gen-viewer-main">
-              <canvas id="gen-canvas"></canvas>
-              
-              <div class="viewer-controls" style="top:16px;right:16px">
-                <button class="btn-tool" onclick="genToggleWire()">WIRE</button>
-                <button class="btn-tool" onclick="genResetCam()">↺</button>
-                <input type="color" id="gen-color" oninput="setGenColor(this.value)" value="#22d3ee" style="width:36px;height:36px;padding:2px;border-radius:8px">
-              </div>
-
-              <div id="gen-axis-wrap" style="position:absolute;bottom:16px;left:16px;width:64px;height:64px;background:rgba(255,255,255,0.6);border-radius:12px;backdrop-filter:blur(4px);border:1px solid var(--border)">
-                <canvas id="gen-axis-canvas" width="64" height="64"></canvas>
-              </div>
-
-              <div style="position:absolute;bottom:16px;right:16px;font-size:11px;color:var(--text3);background:rgba(255,255,255,0.7);padding:6px 12px;border-radius:30px;backdrop-filter:blur(4px);border:1px solid var(--border)">
-                Click components to select · Drag to rotate
+            <div id="gen-viewer-wrap" class="gen-viewer-main" style="position:relative">
+              <iframe id="gen-viewer-iframe" style="width:100%;height:100%;border:none;border-radius:16px"></iframe>
+              <div id="gen-viewer-placeholder" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;pointer-events:none">
+                <div style="font-size:32px;opacity:0.3">&#9670;</div>
+                <div style="font-size:12px;color:var(--text4)">3D Preview</div>
               </div>
             </div>
-
-            <div id="gen-selection-sidebar" class="gen-selection-bottombar empty">
-              <div style="font-size:24px;margin-right:12px">🖱️</div>
-              <div style="font-size:12px;font-weight:600;color:var(--text3)">Select a component to view technical details</div>
+            <div style="display:flex;justify-content:center;margin-top:-8px">
+              <button class="btn btn-cyan" onclick="openInViewer()" id="gen-btn-open-viewer" style="display:none;gap:6px;align-items:center;font-size:13px;padding:8px 20px;border-radius:10px">
+                🔍 View in CAD Viewer
+              </button>
             </div>
           </div>
 
@@ -1108,14 +1061,7 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
 <script>
 // ── CONFIG ───────────────────────────────────────────────────
 var API = 'http://localhost:8000';
-// 3D Gen Viewer State
-window.genRenderer=null; window.genScene=null; window.genCamera=null;
-window.genAllMeshes=[]; window.genAnimId=null;
-window.genDragging=false; window.genLastMouse={x:0,y:0};
-window.genSph={theta:0.6, phi:1.0, radius:3};
-window.genWireMode=false;
-window.genSelectedMesh=null; window.genHoveredMesh=null;
-window.genRaycaster=new THREE.Raycaster(); window.genMouse=new THREE.Vector2();
+// 3D Gen Viewer State (now handled by embedded cadviewer.html iframe)
 
 // ── STATE ────────────────────────────────────────────────────
 var TOKEN = null, USER = null;
@@ -1127,14 +1073,7 @@ window.threeRenderer=null; window.threeScene=null; window.threeCamera=null;
 window.threeMesh=null; window.threeWireMesh=null; window.threeAllMeshes=[];
 window.viewerMode='solid'; window.isDragging=false; window.lastMouse={x:0,y:0};
 window.spherical={theta:0.6, phi:1.0, radius:3};
-// Generated Viewer State
-window.genRenderer=null; window.genScene=null; window.genCamera=null;
-window.genAllMeshes=[]; window.genSelectedMesh=null; window.genHoveredMesh=null;
-window.genAnimId=null; window.genWireMode=false;
-window.genSph={theta:0.6, phi:1.0, radius:3};
-window.genDragging=false; window.genLastMouse={x:0,y:0};
-window.genMouse = new THREE.Vector2();
-window.genRaycaster = new THREE.Raycaster();
+// Generated Viewer State (now handled by embedded cadviewer.html iframe)
 window.genCurrentScript = ''; window.genSTLBlob = null;
 window.genHistory = []; window.genHistoryIdx = -1;
 function r2(n){ return Math.round(n*100)/100; }
@@ -2826,254 +2765,37 @@ function openRFQ(){
   $('rfq-body').innerHTML = '<div class="rfq-pre">'+rfqText+'</div><div style="display:flex;justify-content:flex-end"><button class="btn btn-blue" onclick="navigator.clipboard.writeText(document.querySelector(\'.rfq-pre\').textContent)">Copy to Clipboard</button></div>';
 }
 
-// ── GENERATED VIEWER ──────────────────────────────────────────
+// ── GENERATED VIEWER (embedded CAD Viewer) ───────────────────
 
 async function startGenViewer(partsManifest, legacyStlUrl){
-  // partsManifest: [{name, stl_url}]
-  // Clean up previous
-  if(window.genAnimId){cancelAnimationFrame(window.genAnimId); window.genAnimId=null;}
-  window.genAllMeshes = [];
-  window.genSelectedMesh = null;
-  window.genHoveredMesh = null;
-  if(window.genRenderer){window.genRenderer.dispose(); window.genRenderer=null;}
+  var iframe = $('gen-viewer-iframe');
+  var placeholder = $('gen-viewer-placeholder');
+  var openBtn = $('gen-btn-open-viewer');
+  if(!iframe) return;
 
-  var wrap = $('gen-viewer-wrap');
-  var canvas = $('gen-canvas');
-  if(!wrap || !canvas) return;
-
-  var W = wrap.offsetWidth, H = wrap.offsetHeight || 320;
-  canvas.width = W; canvas.height = H;
-
-  // Scene
-  window.genScene = new THREE.Scene();
-
-  // Camera
-  window.genCamera = new THREE.PerspectiveCamera(45, W/H, 0.01, 10000);
-
-  // Renderer
-  window.genRenderer = new THREE.WebGLRenderer({canvas: canvas, antialias: true, precision: 'highp'});
-  window.genRenderer.setSize(W, H);
-  window.genRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 3));
-  window.genRenderer.shadowMap.enabled = true;
-  window.genRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  window.genRenderer.setClearColor(document.documentElement.dataset.theme === 'dark' ? 0x030712 : 0xf1f5f9, 1);
-
-  // Lights
-  window.genScene.add(new THREE.AmbientLight(0xffffff, 0.6)); 
-  var key = new THREE.DirectionalLight(0xffffff, 1.2);
-  key.position.set(5, 10, 7); key.castShadow = true;
-  window.genScene.add(key);
-  var fill = new THREE.DirectionalLight(0xdde8f0, 0.8); 
-  fill.position.set(-5, 5, 5);
-  window.genScene.add(fill);
-  window.genScene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.4));
-  
-  // Axes Helper
-  window.genScene.add(new THREE.AxesHelper(1));
-
-  // Grid
-  var grid = new THREE.GridHelper(4, 20, 0xd1d5db, 0xe5e7eb);
-  grid.position.y = -1.1;
-  window.genScene.add(grid);
-
-  // Loading Logic
-  var loader = new THREE.STLLoader();
-  var parts = partsManifest || (legacyStlUrl ? [{name: 'Complete Assembly', stl_url: legacyStlUrl}] : []);
-  if(!parts.length) return;
-
-  var globalBBox = new THREE.Box3();
-  var loadedSomething = false;
-
-  for(var p of parts){
-    try {
-      var sep = (p.stl_url.startsWith('/') || API.endsWith('/')) ? '' : '/';
-      var fullUrl = p.stl_url.startsWith('http') ? p.stl_url : (API + sep + p.stl_url);
-      var geom = await new Promise((res, rej) => {
-        loader.load(fullUrl, res, undefined, rej);
-      });
-      if(!geom) continue;
-      
-      var mat = new THREE.MeshPhongMaterial({
-        color: 0xa8b8cc, 
-        specular: 0x222222, 
-        shininess: 60, 
-        side: THREE.DoubleSide
-      });
-      
-      var mesh = new THREE.Mesh(geom, mat);
-      mesh.name = p.name;
-      mesh.castShadow = true; mesh.receiveShadow = true;
-      mesh.userData = { label: p.name, originalColor: mat.color.clone() };
-
-      window.genScene.add(mesh);
-      window.genAllMeshes.push(mesh);
-      
-      geom.computeBoundingBox();
-      globalBBox.expandByPoint(geom.boundingBox.min);
-      globalBBox.expandByPoint(geom.boundingBox.max);
-      loadedSomething = true;
-    } catch(e) { console.warn('Failed to load part:', p.name, e); }
+  // For inline preview prefer STL (instant load, no WASM needed).
+  // The "View in CAD Viewer" button opens the full viewer with STEP support.
+  var fileUrl = window._genSTLUrl || legacyStlUrl || '';
+  if(!fileUrl && partsManifest && partsManifest.length){
+    fileUrl = partsManifest[0].stl_url || '';
   }
+  if(!fileUrl) return;
 
-  if(!loadedSomething) return;
-
-  var center = new THREE.Vector3(); globalBBox.getCenter(center);
-  var size = new THREE.Vector3(); globalBBox.getSize(size);
-  var maxDim = Math.max(size.x, size.y, size.z);
-  var scale = (maxDim > 0) ? (2.5 / maxDim) : 1.0;
-
-  window.genAllMeshes.forEach(m => {
-    m.geometry.translate(-center.x, -center.y, -center.z);
-    m.geometry.scale(scale, scale, scale);
-    m.position.set(0,0,0);
-  });
-
-  // Camera
-  window.genSph = {theta:0.6, phi:1.0, radius:3};
-  updateGenCamera();
-
-  // Mouse controls
-  setupGenOrbit(wrap);
-
-  // Interactivity
-  wrap.addEventListener('mousemove', onGenMouseMove);
-  wrap.addEventListener('click', onGenMouseClick);
-
-  // Axis widget
-  var updateAxisGen = createAxisWidget('gen-axis-canvas', function(){ return window.genSph; });
-
-  // Animate
-  var autoRotate = true;
-  function animate(){
-    window.genAnimId = requestAnimationFrame(animate);
-    if(autoRotate && !window.genDragging) window.genSph.theta += 0.005;
-    updateGenCamera();
-    updateAxisGen();
-    window.genRenderer.render(window.genScene, window.genCamera);
-  }
-  animate();
-  wrap.addEventListener('mousedown', function(){autoRotate=false;}, {once:true});
-  wrap.addEventListener('touchstart', function(){autoRotate=false;}, {once:true});
+  // Build cadviewer URL — use /viewer route when served by FastAPI, otherwise cadviewer.html
+  var viewerBase = (window.location.protocol === 'file:') ? 'cadviewer.html' : '/viewer';
+  var viewerSrc = viewerBase + '?file=' + encodeURIComponent(fileUrl);
+  iframe.src = viewerSrc;
+  if(placeholder) placeholder.style.display = 'none';
+  if(openBtn) openBtn.style.display = 'inline-flex';
 }
 
-function onGenMouseMove(event) {
-  var wrap = $('gen-viewer-wrap');
-  var rect = wrap.getBoundingClientRect();
-  window.genMouse.x = ((event.clientX - rect.left) / wrap.offsetWidth) * 2 - 1;
-  window.genMouse.y = -((event.clientY - rect.top) / wrap.offsetHeight) * 2 + 1;
+// Stubs for removed functions (prevents errors if called elsewhere)
+function genToggleWire(){}
+function genResetCam(){}
+function setGenColor(){}
+function tryVisualRefine(){ return false; }
 
-  window.genRaycaster.setFromCamera(window.genMouse, window.genCamera);
-  var intersects = window.genRaycaster.intersectObjects(window.genAllMeshes);
-
-  // Reset previous hover
-  if (window.genHoveredMesh && window.genHoveredMesh !== window.genSelectedMesh) {
-    window.genHoveredMesh.material.emissiveIntensity = 0;
-  }
-
-  if (intersects.length > 0) {
-    var mesh = intersects[0].object;
-    if (mesh !== window.genSelectedMesh) {
-      mesh.material.emissive.setHex(0x22d3ee);
-      mesh.material.emissiveIntensity = 0.3;
-      window.genHoveredMesh = mesh;
-      wrap.style.cursor = 'pointer';
-    }
-  } else {
-    window.genHoveredMesh = null;
-    wrap.style.cursor = 'grab';
-  }
-}
-
-function onGenMouseClick(event) {
-  if (window.genDragging) return; 
-
-  window.genRaycaster.setFromCamera(window.genMouse, window.genCamera);
-  var intersects = window.genRaycaster.intersectObjects(window.genAllMeshes);
-
-  // Reset previous selection
-  if (window.genSelectedMesh) {
-    window.genSelectedMesh.material.emissiveIntensity = 0;
-    window.genSelectedMesh.material.color.copy(window.genSelectedMesh.userData.originalColor);
-  }
-
-  if (intersects.length > 0) {
-    var mesh = intersects[0].object;
-    window.genSelectedMesh = mesh;
-    
-    // Highlight selection
-    mesh.material.emissive.setHex(0x0891b2);
-    mesh.material.emissiveIntensity = 0.5;
-    
-    showPartSidebar(mesh);
-  } else {
-    window.genSelectedMesh = null;
-    hidePartSidebar();
-  }
-}
-
-function showPartSidebar(mesh) {
-  var sidebar = $('gen-selection-sidebar');
-  sidebar.classList.remove('empty');
-  
-  // Calculate dimensions
-  mesh.geometry.computeBoundingBox();
-  var box = mesh.geometry.boundingBox;
-  var w = r2(box.max.x - box.min.x);
-  var h = r2(box.max.y - box.min.y);
-  var d = r2(box.max.z - box.min.z);
-
-  const name = mesh.name || 'Component';
-  const colorHex = '#' + mesh.material.color.getHexString();
-
-  // Use a row of cards for the bottom bar
-  sidebar.innerHTML = `
-    <div style="display:flex; align-items:center; gap:16px">
-      <div class="gen-selection-card">
-        <div class="sel-title">${name}</div>
-        <div style="font-size:11px;color:var(--text3);font-weight:600">${w} × ${h} × ${d} mm</div>
-      </div>
-      
-      <div style="width:1px; height:24px; background:var(--border2); margin:0 4px"></div>
-      
-      <div class="sel-color-control">
-        <span style="font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:0.03em">Color</span>
-        <input type="color" class="sel-color-input" value="${colorHex}" oninput="updateSelectedPartColor(this.value)">
-      </div>
-    </div>
-    
-    <div style="display:flex; align-items:center; gap:12px">
-      <button class="btn btn-outline" style="padding:6px 14px; font-size:12px; border-radius:10px" onclick="clearGenHighlight()">Deselect</button>
-    </div>
-  `;
-}
-
-function updateSelectedPartColor(hex) {
-  if (!window.genSelectedMesh) return;
-  const color = new THREE.Color(hex);
-  window.genSelectedMesh.material.color.copy(color);
-  // Important: sync originalColor so hover doesn't revert it
-  window.genSelectedMesh.userData.originalColor = color.getHex();
-  
-  // Subtle glow pulse
-  window.genSelectedMesh.material.emissive.set(color).multiplyScalar(0.4);
-  setTimeout(() => {
-     if (window.genSelectedMesh) {
-       // Revert to standard "selection" emissive if still selected
-       window.genSelectedMesh.material.emissive.setHex(0x0891b2);
-       window.genSelectedMesh.material.emissiveIntensity = 0.5;
-     }
-  }, 400);
-}
-
-function hidePartSidebar() {
-  var sidebar = $('gen-selection-sidebar');
-  sidebar.classList.add('empty');
-  sidebar.innerHTML = `
-    <div style="font-size:24px;margin-bottom:8px">🖱️</div>
-    <div style="font-size:12px;font-weight:600;color:var(--text3)">Select a component<br>to view details</div>
-  `;
-}
-
+// parseBinarySTL — used by assembly viewer
 function parseBinarySTL(buf){
   var dv = new DataView(buf);
   var cnt = dv.getUint32(80, true);
@@ -3094,103 +2816,12 @@ function parseBinarySTL(buf){
     var vs = ms.map(function(m){return[parseFloat(m[1]),parseFloat(m[2]),parseFloat(m[3])];});
     for(var i=0; i+2<vs.length; i+=3) tris.push([vs[i],vs[i+1],vs[i+2]]);
   }
-  // Decimate if needed — higher limit for generated parts
   var max = 500000;
   if(tris.length > max){
     var step = Math.ceil(tris.length / max);
     tris = tris.filter(function(_,i){ return i % step === 0; });
   }
   return tris;
-}
-
-function updateGenCamera(){
-  var r=window.genSph.radius, t=window.genSph.theta, p=window.genSph.phi;
-  window.genCamera.position.set(r*Math.sin(p)*Math.cos(t), r*Math.cos(p), r*Math.sin(p)*Math.sin(t));
-  window.genCamera.lookAt(0,0,0);
-}
-
-function setupGenOrbit(el){
-  el.addEventListener('mousedown', function(e){window.genDragging=true; window.genLastMouse={x:e.clientX,y:e.clientY};});
-  window.addEventListener('mousemove', function(e){
-    if(!window.genDragging) return;
-    var dx=e.clientX-window.genLastMouse.x, dy=e.clientY-window.genLastMouse.y;
-    window.genSph.theta -= dx*0.01;
-    window.genSph.phi = Math.max(0.1, Math.min(Math.PI-0.1, window.genSph.phi - dy*0.01));
-    window.genLastMouse={x:e.clientX,y:e.clientY};
-  });
-  window.addEventListener('mouseup', function(){window.genDragging=false;});
-  el.addEventListener('wheel', function(e){
-    e.preventDefault();
-    window.genSph.radius = Math.max(1, Math.min(10, window.genSph.radius + e.deltaY*0.005));
-    updateGenCamera();
-  }, {passive:false});
-  // Touch
-  el.addEventListener('touchstart', function(e){
-    if(e.touches.length===1){window.genDragging=true; window.genLastMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};}
-  });
-  el.addEventListener('touchmove', function(e){
-    if(!window.genDragging||e.touches.length!==1) return;
-    var dx=e.touches[0].clientX-window.genLastMouse.x, dy=e.touches[0].clientY-window.genLastMouse.y;
-    window.genSph.theta -= dx*0.01;
-    window.genSph.phi = Math.max(0.1, Math.min(Math.PI-0.1, window.genSph.phi - dy*0.01));
-    window.genLastMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};
-    e.preventDefault();
-  }, {passive:false});
-  el.addEventListener('touchend', function(){window.genDragging=false;});
-}
-
-function genToggleWire(){
-  window.genWireMode = !window.genWireMode;
-  window.genAllMeshes.forEach(m => { m.material.wireframe = window.genWireMode; });
-}
-function genResetCam(){ window.genSph = {theta:0.6, phi:1.0, radius:3}; updateGenCamera(); }
-function setGenColor(hex){
-  var color = new THREE.Color(hex);
-  window.genAllMeshes.forEach(m => {
-    m.material.color.copy(color);
-    m.userData.originalColor = color.clone();
-  });
-}
-
-// Visual-only commands that don't need Gemini
-var VISUAL_COMMANDS = {
-  'black':   '#111111', 'white':  '#f0f0f0', 'red':     '#dc2626',
-  'blue':    '#2563eb', 'green':  '#16a34a', 'yellow':  '#eab308',
-  'orange':  '#ea580c', 'purple': '#7c3aed', 'pink':    '#ec4899',
-  'cyan':    '#22d3ee', 'grey':   '#6b7280', 'gray':    '#6b7280',
-  'silver':  '#a8b8cc', 'gold':   '#d4a017', 'bronze':  '#b08d57',
-  'aluminium':'#a8b8cc','aluminum':'#a8b8cc', 'steel':   '#8899aa',
-  'copper':  '#b87333', 'brass':  '#c9a227', 'titanium':'#878681',
-};
-
-function tryVisualRefine(msg){
-  var lower = msg.toLowerCase().trim();
-  // Check for color change requests
-  var colorPatterns = [
-    /(?:change|make|set|turn)\s+(?:it|the\s+(?:part|color|colour))?\s*(?:to\s+)?(\w+)/,
-    /^(\w+)\s+colou?r$/,
-    /^colou?r\s+(?:it\s+)?(\w+)$/,
-    /^(\w+)$/,
-  ];
-  for(var i=0; i<colorPatterns.length; i++){
-    var m = lower.match(colorPatterns[i]);
-    if(m){
-      var colorName = m[1];
-      if(VISUAL_COMMANDS[colorName]){
-        setGenColor(VISUAL_COMMANDS[colorName]);
-        $('gen-color').value = VISUAL_COMMANDS[colorName];
-        return true;
-      }
-    }
-  }
-  // Check for hex color
-  var hexMatch = lower.match(/#([0-9a-f]{6})/i);
-  if(hexMatch){
-    setGenColor('#' + hexMatch[1]);
-    $('gen-color').value = '#' + hexMatch[1];
-    return true;
-  }
-  return false;
 }
 
 // ── UPLOAD TAB SWITCHER ──────────────────────────────────────
@@ -4558,6 +4189,17 @@ function _startTopoViewer(canvasId, wrapId, stlUrl){
       (function loop(){ requestAnimationFrame(loop); renderer.render(scene, camera); })();
     })
     .catch(function(e){ console.error('_startTopoViewer failed for', stlUrl, e); });
+}
+
+function openInViewer(){
+  // Open the generated model in the full CAD Viewer (prefer STEP for full fidelity)
+  var stepUrl = window._genSTEPUrl || '';
+  var stlUrl = window._genSTLUrl || '';
+  var url = stepUrl || stlUrl;
+  if(!url){ alert('No generated file to open.'); return; }
+  var viewerBase = (window.location.protocol === 'file:') ? 'cadviewer.html' : '/viewer';
+  var viewerUrl = viewerBase + '?file=' + encodeURIComponent(url);
+  window.open(viewerUrl, '_blank');
 }
 
 async function analyseGenerated(){

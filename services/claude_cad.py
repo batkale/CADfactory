@@ -210,9 +210,20 @@ def check_complexity(description: str) -> Optional[str]:
 def research_shape(description: str) -> Optional[str]:
     """
     Ask AI to describe the standard physical form of an object.
+    Uses Google Search grounding for real-world accuracy when available.
     Returns a concise geometric description, or None if no standard form.
     """
     prompt = SHAPE_RESEARCH_PROMPT.format(description=description)
+
+    # Try web-grounded research first (more accurate for real products)
+    try:
+        result = _research_shape_grounded(description, prompt)
+        if result:
+            return result
+    except Exception as e:
+        logger.warning(f"Grounded shape research failed, falling back to ungrounded: {e}")
+
+    # Fallback: ungrounded generation
     try:
         result = _generate_content(MODEL_FLASH, "", prompt)
         if result and "NO_STANDARD_FORM" not in result:
@@ -221,6 +232,68 @@ def research_shape(description: str) -> Optional[str]:
         logger.info(f"Shape research: no standard form for '{description[:50]}'")
     except Exception as e:
         logger.warning(f"Shape research failed (non-fatal): {e}")
+    return None
+
+
+def _research_shape_grounded(description: str, prompt: str) -> Optional[str]:
+    """
+    Use Gemini with Google Search grounding for accurate product research.
+    Gets real dimensions, standard specs, and component details from the web.
+    """
+    import httpx
+    import json
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return None
+
+    grounded_prompt = (
+        f"Search the web for the exact physical specifications and geometry of: {description}\n\n"
+        f"Find:\n"
+        f"- Standard real-world dimensions (length, width, height, diameter) in mm\n"
+        f"- Number and size of holes, bores, openings\n"
+        f"- Sub-components and their standard sizes\n"
+        f"- Cross-section shape and profile\n"
+        f"- Any standard parts used (bearings, fasteners, plugs)\n\n"
+        f"Then answer this:\n{prompt}"
+    )
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{MODEL_FLASH}:generateContent"
+    )
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                url,
+                params={"key": api_key},
+                json={
+                    "tools": [{"google_search": {}}],
+                    "contents": [{"parts": [{"text": grounded_prompt}]}],
+                    "generationConfig": {
+                        "temperature": 0.1,
+                        "maxOutputTokens": 1024,
+                    },
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        # Collect all text parts
+        raw_text = ""
+        for part in data.get("candidates", [{}])[0].get("content", {}).get("parts", []):
+            if part.get("text"):
+                raw_text += part["text"]
+
+        if raw_text and "NO_STANDARD_FORM" not in raw_text:
+            logger.info(f"Grounded shape research for '{description[:50]}': {raw_text[:120]}...")
+            return raw_text.strip()
+
+    except Exception as e:
+        logger.warning(f"Grounded research HTTP call failed: {e}")
+        raise
+
     return None
 
 
@@ -418,6 +491,35 @@ async def generate_and_execute(
             attempts=attempts,
             total_time_s=time.time() - start_time
         )
+
+    # Step 5.5: AI Validation — check if the generated model matches the request
+    try:
+        from services.ai_validator import validate_and_correct
+        validated_script, validation = await validate_and_correct(script, description)
+        if validation.corrections_applied > 0 and validated_script != script:
+            # Re-execute the corrected script
+            is_valid_v, val_warns_v = validate_script(validated_script)
+            if is_valid_v:
+                corrected_result = execute_cadquery_sandboxed(validated_script)
+                if corrected_result.success:
+                    script = validated_script
+                    result = corrected_result
+                    all_warnings.append(
+                        f"AI validation corrected {validation.corrections_applied} round(s), "
+                        f"confidence: {validation.confidence:.0%}"
+                    )
+                    logger.info(f"AI validation correction succeeded (conf={validation.confidence:.2f})")
+                else:
+                    logger.warning("AI-corrected script failed execution — keeping original")
+                    all_warnings.append(f"AI validation confidence: {validation.confidence:.0%} (correction failed exec)")
+            else:
+                all_warnings.append(f"AI validation confidence: {validation.confidence:.0%} (correction failed lint)")
+        else:
+            if validation.confidence < 0.7:
+                all_warnings.append(f"AI validation confidence: {validation.confidence:.0%} — model may not fully match description")
+            logger.info(f"AI validation: confidence={validation.confidence:.2f}, no correction needed")
+    except Exception as e:
+        logger.warning(f"AI validation failed (non-fatal): {e}")
 
     # Step 6: Auto-enhance pass — add fillets/grooves/bearing details to working script
     try:

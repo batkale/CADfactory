@@ -380,45 +380,56 @@ def build_cadquery_script(obj: DecomposedObject) -> str:
                 r = float(op.params.get("fillet_r", 2.0))
                 lines.append(f"try: {var} = {var}.edges().fillet({r})\nexcept: pass")
 
-    # Combine parts and show them
-    lines.append("\n# Final Assembly & Component Display")
+    # Combine parts: two-phase assembly (additive first, then subtractive)
+    lines.append("\n# Final Assembly — Phase 1: Additive geometry")
     lines.append("result = cq.Workplane('XY')")
     result_set = False
 
+    # Collect all standalone subtract ops (labels with no 'add' ops) for Phase 2
+    deferred_cuts: List[str] = []
+
     for i, (label, vars_with_ops) in enumerate(parts.items()):
-        if not vars_with_ops: continue
-        
+        if not vars_with_ops:
+            continue
+
         comp_var = f"part_{label}"
         color = COLOR_PALETTE[i % len(COLOR_PALETTE)]
-        
-        # Initialize component with first 'add' operation or empty workplane
+
         adds = [v for v, o in vars_with_ops if o == "add"]
         subs = [v for v, o in vars_with_ops if o == "subtract"]
-        
+
         if adds:
+            # Build this component from its additive primitives
             lines.append(f"{comp_var} = {adds[0]}")
             for v in adds[1:]:
                 lines.append(f"{comp_var} = {comp_var}.union({v})")
-            
-            # Now subtraction from this specific component
+
+            # Apply local subtractions (holes belonging to this component)
             for v in subs:
                 lines.append(f"{comp_var} = {comp_var}.cut({v})")
-        else:
-            # Only subtractions — create an empty piece to cut from? 
-            # Or just skip if nothing to cut from.
-            continue
-        
-        lines.append(f"show_object({comp_var}, name='{label}', options={{'color': '{color}'}})")
 
-        # Add to master result
-        if not result_set:
-            lines.append(f"result = {comp_var}")
-            result_set = True
+            lines.append(f"show_object({comp_var}, name='{label}', options={{'color': '{color}'}})")
+
+            # Merge into master result
+            if not result_set:
+                lines.append(f"result = {comp_var}")
+                result_set = True
+            else:
+                lines.append(f"result = result.union({comp_var})")
         else:
-            lines.append(f"result = result.union({comp_var})")
+            # Subtract-only label (e.g. "bearing_hole", "mounting_holes")
+            # These must be cut from the assembled result after all additive geometry
+            for v in subs:
+                deferred_cuts.append(v)
 
     if not result_set:
         lines.append("result = cq.Workplane('XY').box(1, 1, 1)")
+
+    # Phase 2: Apply deferred cuts (holes, bores, pockets with their own labels)
+    if deferred_cuts:
+        lines.append("\n# Phase 2 — Subtractive: Holes, bores, and pockets")
+        for v in deferred_cuts:
+            lines.append(f"result = result.cut({v})")
 
     return "\n".join(lines)
 

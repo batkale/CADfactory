@@ -1,0 +1,1378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>CAD Viewer — CADfactory</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/STLLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist/occt-import-js.js"></script>
+<style>
+:root{
+  --bg:#f8fafc;--bg2:#ffffff;--bg3:#f1f5f9;--bg4:#e2e8f0;
+  --border:#e2e8f0;--border2:#cbd5e1;
+  --text:#0f172a;--text2:#334155;--text3:#64748b;--text4:#94a3b8;
+  --cyan:#0891b2;--cyan-bg:rgba(8,145,178,0.08);--cyan-border:rgba(8,145,178,0.2);
+  --blue:#2563eb;--blue-bg:rgba(37,99,235,0.08);
+  --green:#16a34a;--green-bg:rgba(22,163,74,0.08);
+  --amber:#d97706;--amber-bg:rgba(217,119,6,0.08);
+  --red:#dc2626;
+  --shadow:0 1px 3px rgba(0,0,0,0.08);
+  --viewer-bg:#f1f5f9;
+  --panel-w:240px;
+  --toolbar-h:44px;
+  --status-h:26px;
+}
+[data-theme="dark"]{
+  --bg:#030712;--bg2:#111827;--bg3:#0f172a;--bg4:#1f2937;
+  --border:#1f2937;--border2:#374151;
+  --text:#f9fafb;--text2:#e5e7eb;--text3:#9ca3af;--text4:#6b7280;
+  --cyan:#22d3ee;--cyan-bg:rgba(34,211,238,0.08);--cyan-border:rgba(34,211,238,0.2);
+  --blue:#60a5fa;--blue-bg:rgba(96,165,250,0.08);
+  --green:#34d399;--green-bg:rgba(52,211,153,0.08);
+  --amber:#fbbf24;--amber-bg:rgba(251,191,36,0.08);
+  --red:#f87171;
+  --shadow:0 1px 3px rgba(0,0,0,0.4);
+  --viewer-bg:#030712;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+
+/* ── TOOLBAR ─────────────────────────────────────── */
+#toolbar{
+  height:var(--toolbar-h);background:var(--bg2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 12px;gap:6px;z-index:50;
+  box-shadow:var(--shadow);
+}
+.tb-group{display:flex;align-items:center;gap:2px}
+.tb-sep{width:1px;height:22px;background:var(--border2);margin:0 6px}
+.tb-btn{
+  background:none;border:1px solid transparent;border-radius:6px;padding:5px 8px;
+  font-size:12px;font-weight:500;cursor:pointer;color:var(--text2);
+  display:flex;align-items:center;gap:4px;transition:all 0.12s;white-space:nowrap;
+}
+.tb-btn:hover{background:var(--bg3);color:var(--text)}
+.tb-btn.active{background:var(--cyan-bg);color:var(--cyan);border-color:var(--cyan-border)}
+.tb-btn svg{width:16px;height:16px;flex-shrink:0}
+.tb-btn.icon-only{padding:5px 6px}
+.logo-mini{display:flex;align-items:center;gap:6px;margin-right:8px;cursor:pointer;text-decoration:none}
+.logo-mini .ico{width:26px;height:26px;border-radius:5px;background:linear-gradient(135deg,#0891b2,#2563eb);display:flex;align-items:center;justify-content:center;font-size:13px}
+.logo-mini span{font-weight:800;font-size:14px;color:var(--text)}.logo-mini em{font-style:normal;color:var(--cyan)}
+.tb-spacer{flex:1}
+
+/* ── WORKSPACE ───────────────────────────────────── */
+#workspace{
+  display:flex;height:calc(100vh - var(--toolbar-h) - var(--status-h));
+}
+
+/* ── LEFT SIDEBAR ────────────────────────────────── */
+#sidebar-left{
+  width:var(--panel-w);min-width:180px;background:var(--bg2);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.panel-hdr{
+  padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;
+  color:var(--text3);border-bottom:1px solid var(--border);background:var(--bg3);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.panel-hdr button{background:none;border:none;color:var(--text4);cursor:pointer;font-size:13px;padding:2px}
+.panel-hdr button:hover{color:var(--text)}
+#part-tree{flex:1;overflow-y:auto;padding:4px 0}
+.tree-item{
+  display:flex;align-items:center;gap:6px;padding:4px 12px;cursor:pointer;
+  font-size:12px;color:var(--text2);transition:background 0.1s;user-select:none;
+}
+.tree-item:hover{background:var(--bg3)}
+.tree-item.selected{background:var(--cyan-bg);color:var(--cyan)}
+.tree-item .vis-btn{
+  width:18px;height:18px;border:none;background:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;border-radius:4px;
+  color:var(--text3);font-size:14px;flex-shrink:0;
+}
+.tree-item .vis-btn:hover{background:var(--bg4)}
+.tree-item .vis-btn.hidden-part{color:var(--text4);opacity:0.5}
+.tree-swatch{width:10px;height:10px;border-radius:2px;flex-shrink:0;border:1px solid var(--border2)}
+.tree-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-empty{padding:20px;text-align:center;color:var(--text4);font-size:12px;font-style:italic}
+
+/* ── VIEWPORT ────────────────────────────────────── */
+#viewport{
+  flex:1;position:relative;background:var(--viewer-bg);overflow:hidden;
+}
+#viewer-canvas{display:block;width:100%;height:100%}
+#axis-widget{position:absolute;bottom:12px;left:12px;width:90px;height:90px;pointer-events:none;z-index:10}
+
+/* Viewport overlay buttons */
+.vp-controls{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:4px;z-index:10}
+.vp-btn{
+  width:32px;height:32px;border-radius:6px;border:1px solid var(--border);
+  background:var(--bg2);color:var(--text2);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;
+  transition:all 0.12s;opacity:0.85;
+}
+.vp-btn:hover{opacity:1;border-color:var(--cyan);color:var(--cyan)}
+.vp-btn.active{background:var(--cyan-bg);color:var(--cyan);border-color:var(--cyan-border);opacity:1}
+.vp-row{display:flex;gap:4px}
+
+/* View cube */
+.view-cube{
+  position:absolute;top:10px;left:10px;z-index:10;
+  display:grid;grid-template-columns:repeat(3,28px);grid-template-rows:repeat(2,28px);gap:2px;
+}
+.vc-btn{
+  width:28px;height:28px;border-radius:4px;border:1px solid var(--border);
+  background:var(--bg2);color:var(--text3);cursor:pointer;font-size:9px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;transition:all 0.12s;opacity:0.8;
+}
+.vc-btn:hover{opacity:1;border-color:var(--cyan);color:var(--cyan)}
+
+/* Drop overlay */
+#drop-overlay{
+  position:fixed;inset:0;background:rgba(8,145,178,0.15);backdrop-filter:blur(4px);
+  z-index:200;display:none;align-items:center;justify-content:center;
+  font-size:20px;font-weight:700;color:var(--cyan);
+  border:3px dashed var(--cyan);margin:8px;border-radius:16px;
+}
+#drop-overlay.show{display:flex}
+
+/* ── RIGHT SIDEBAR ───────────────────────────────── */
+#sidebar-right{
+  width:var(--panel-w);min-width:180px;background:var(--bg2);border-left:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+#props-content{flex:1;overflow-y:auto;padding:10px 12px}
+.prop-group{margin-bottom:14px}
+.prop-group-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text4);margin-bottom:6px}
+.prop-row{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:3px 0}
+.prop-label{color:var(--text3)}
+.prop-val{color:var(--text);font-weight:500;font-family:'SF Mono',Consolas,monospace;font-size:11px}
+.prop-slider{width:100%;margin-top:4px;accent-color:var(--cyan)}
+.prop-color{width:24px;height:18px;border:1px solid var(--border2);border-radius:3px;cursor:pointer;padding:0}
+.prop-empty{color:var(--text4);font-size:12px;font-style:italic;text-align:center;padding:30px 10px}
+
+/* ── STATUSBAR ───────────────────────────────────── */
+#statusbar{
+  height:var(--status-h);background:var(--bg2);border-top:1px solid var(--border);
+  display:flex;align-items:center;padding:0 14px;gap:20px;font-size:11px;color:var(--text3);
+}
+.status-item{display:flex;align-items:center;gap:4px}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
+
+/* ── MEASURE LABEL ───────────────────────────────── */
+.measure-label{
+  position:absolute;background:var(--bg2);border:1px solid var(--cyan);
+  color:var(--cyan);font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;
+  pointer-events:none;z-index:20;white-space:nowrap;
+  font-family:'SF Mono',Consolas,monospace;
+}
+
+/* ── LOADING SPINNER ─────────────────────────────── */
+#loading-overlay{
+  position:absolute;inset:0;background:rgba(0,0,0,0.3);z-index:100;
+  display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;
+}
+#loading-overlay.show{display:flex}
+.spinner{width:36px;height:36px;border:3px solid var(--border2);border-top-color:var(--cyan);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{color:#fff;font-size:13px;font-weight:500}
+
+/* ── MODAL (URL input) ───────────────────────────── */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:300;display:none;align-items:center;justify-content:center}
+.modal-bg.show{display:flex}
+.modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;width:440px;max-width:90vw;box-shadow:0 8px 30px rgba(0,0,0,0.2)}
+.modal-title{font-size:15px;font-weight:700;margin-bottom:12px}
+.modal-input{width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;outline:none}
+.modal-input:focus{border-color:var(--cyan)}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.modal-btn{padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border2);background:var(--bg3);color:var(--text2)}
+.modal-btn:hover{background:var(--bg4)}
+.modal-btn.primary{background:linear-gradient(135deg,var(--cyan),var(--blue));color:#fff;border:none}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text4)}
+
+/* Responsive */
+@media(max-width:900px){
+  #sidebar-left,#sidebar-right{display:none}
+  .view-cube{left:6px;top:6px}
+}
+
+/* Embed mode — minimal viewer when loaded in an iframe */
+body.embed #toolbar{display:none}
+body.embed #sidebar-left{display:none}
+body.embed #sidebar-right{display:none}
+body.embed #statusbar{display:none}
+body.embed #workspace{height:100vh}
+body.embed #viewport{background:transparent}
+body.embed .view-cube{display:none}
+body.embed .vp-controls{display:none}
+body.embed #drop-overlay{display:none!important}
+body.embed #url-modal{display:none!important}
+body.embed #loading-overlay .loading-text{font-size:11px}
+body.embed{overflow:hidden}
+</style>
+</head>
+<body>
+
+<!-- ── TOOLBAR ──────────────────────────────────────────── -->
+<div id="toolbar">
+  <a class="logo-mini" href="cadfactory.html" title="Back to CADfactory">
+    <div class="ico">&#9670;</div>
+    <span>CAD<em>viewer</em></span>
+  </a>
+  <div class="tb-sep"></div>
+
+  <!-- File -->
+  <div class="tb-group">
+    <button class="tb-btn" onclick="openFilePicker()" title="Open file (STL / STEP)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Open
+    </button>
+    <button class="tb-btn" onclick="showUrlModal()" title="Load from URL">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      URL
+    </button>
+  </div>
+  <div class="tb-sep"></div>
+
+  <!-- View mode -->
+  <div class="tb-group">
+    <button class="tb-btn active" id="mode-shaded" onclick="setViewMode('shaded')" title="Shaded">
+      <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+      Shaded
+    </button>
+    <button class="tb-btn" id="mode-wireframe" onclick="setViewMode('wireframe')" title="Wireframe">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+      Wire
+    </button>
+    <button class="tb-btn" id="mode-xray" onclick="setViewMode('xray')" title="X-Ray (Transparent)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" opacity="0.5"/><circle cx="12" cy="12" r="4"/></svg>
+      X-Ray
+    </button>
+  </div>
+  <div class="tb-sep"></div>
+
+  <!-- Tools -->
+  <div class="tb-group">
+    <button class="tb-btn" id="tool-measure" onclick="toggleMeasure()" title="Measure distance">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 2l20 20"/><path d="M2 7V2h5"/><path d="M22 17v5h-5"/></svg>
+      Measure
+    </button>
+    <button class="tb-btn" id="tool-section" onclick="toggleSection()" title="Section plane">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="1"/><line x1="2" y1="12" x2="22" y2="12" stroke-dasharray="3 2"/></svg>
+      Section
+    </button>
+    <button class="tb-btn icon-only" onclick="takeScreenshot()" title="Screenshot">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+    </button>
+    <button class="tb-btn icon-only" onclick="fitAll()" title="Fit all">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+    </button>
+  </div>
+  <div class="tb-sep"></div>
+
+  <!-- Toggle grid / axes -->
+  <div class="tb-group">
+    <button class="tb-btn icon-only active" id="toggle-grid" onclick="toggleGrid()" title="Toggle grid">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="3" y1="3" x2="3" y2="21"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/><line x1="21" y1="3" x2="21" y2="21"/><line x1="3" y1="3" x2="21" y2="3"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="3" y1="21" x2="21" y2="21"/></svg>
+    </button>
+    <button class="tb-btn icon-only active" id="toggle-axes" onclick="toggleAxes()" title="Toggle axes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="20" x2="12" y2="4" stroke="green"/><line x1="4" y1="12" x2="20" y2="12" stroke="red"/><line x1="7" y1="17" x2="17" y2="7" stroke="blue"/></svg>
+    </button>
+  </div>
+
+  <div class="tb-spacer"></div>
+
+  <!-- Theme -->
+  <button class="tb-btn" id="theme-btn" onclick="toggleTheme()">&#9790; Light</button>
+</div>
+
+<!-- ── WORKSPACE ────────────────────────────────────────── -->
+<div id="workspace">
+
+  <!-- Left sidebar: Model Tree -->
+  <div id="sidebar-left">
+    <div class="panel-hdr">
+      <span>Model Tree</span>
+      <button onclick="toggleAllVisibility()" title="Toggle all">&#128065;</button>
+    </div>
+    <div id="part-tree">
+      <div class="tree-empty">No model loaded.<br>Open a file or drag &amp; drop.</div>
+    </div>
+  </div>
+
+  <!-- 3D Viewport -->
+  <div id="viewport">
+    <canvas id="viewer-canvas"></canvas>
+    <canvas id="axis-widget"></canvas>
+
+    <!-- Standard view buttons -->
+    <div class="view-cube">
+      <button class="vc-btn" onclick="setStdView('front')" title="Front">F</button>
+      <button class="vc-btn" onclick="setStdView('top')" title="Top">T</button>
+      <button class="vc-btn" onclick="setStdView('right')" title="Right">R</button>
+      <button class="vc-btn" onclick="setStdView('back')" title="Back">Bk</button>
+      <button class="vc-btn" onclick="setStdView('bottom')" title="Bottom">Bo</button>
+      <button class="vc-btn" onclick="setStdView('left')" title="Left">L</button>
+    </div>
+
+    <div class="vp-controls">
+      <button class="vp-btn" onclick="setStdView('iso')" title="Isometric">3D</button>
+      <button class="vp-btn" onclick="fitAll()" title="Fit all">&#8718;</button>
+    </div>
+
+    <!-- Loading spinner -->
+    <div id="loading-overlay">
+      <div class="spinner"></div>
+      <div class="loading-text" id="loading-text">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Right sidebar: Properties -->
+  <div id="sidebar-right">
+    <div class="panel-hdr"><span>Properties</span></div>
+    <div id="props-content">
+      <div class="prop-empty">Select a part to see properties</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── STATUS BAR ──────────────────────────────────────── -->
+<div id="statusbar">
+  <div class="status-item"><div class="status-dot"></div><span id="st-status">Ready</span></div>
+  <div class="status-item">&#9650; <span id="st-tris">0</span></div>
+  <div class="status-item" id="st-file-wrap" style="display:none">&#128196; <span id="st-file"></span></div>
+  <div class="status-item" id="st-parts-wrap" style="display:none">&#9632; <span id="st-parts">0</span> parts</div>
+  <div style="flex:1"></div>
+  <div class="status-item" style="color:var(--text4)">Three.js r128 + OpenCASCADE WASM</div>
+</div>
+
+<!-- ── DROP OVERLAY ────────────────────────────────────── -->
+<div id="drop-overlay">Drop STL / STEP file here</div>
+
+<!-- ── URL MODAL ───────────────────────────────────────── -->
+<div class="modal-bg" id="url-modal">
+  <div class="modal-box">
+    <div class="modal-title">Load from URL</div>
+    <input class="modal-input" id="url-input" placeholder="https://... or /api/generate/files/abc.stl" />
+    <div class="modal-actions">
+      <button class="modal-btn" onclick="hideUrlModal()">Cancel</button>
+      <button class="modal-btn primary" onclick="loadFromUrlInput()">Load</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── HIDDEN FILE INPUT ───────────────────────────────── -->
+<input type="file" id="file-input" accept=".stl,.step,.stp,.brep,.iges,.igs" style="display:none" />
+
+<script>
+/* ================================================================
+   CAD Viewer — CADfactory
+   FreeCAD-inspired web viewer using Three.js + occt-import-js
+   ================================================================ */
+
+// Auto-detect API server — works when served by FastAPI, opened from file://, or embedded in iframe
+var API = (window.location.protocol === 'file:') ? 'http://localhost:8000' : window.location.origin;
+
+// ── State ──────────────────────────────────────────────
+var scene, camera, renderer, controls;
+var gridHelper, axesHelper;
+var allParts = [];       // [{mesh, wireframe, name, color, visible, triCount}]
+var selectedIdx = -1;
+var totalTriangles = 0;
+var viewMode = 'shaded'; // shaded | wireframe | xray
+var measureActive = false;
+var measurePoints = [];
+var measureObjects = [];
+var sectionActive = false;
+var sectionPlane = null;
+var clipPlane = null;
+var occtReady = null;    // promise for occt-import-js init
+
+// Part color palette (FreeCAD-inspired)
+var COLORS = [0x4FC3F7,0x81C784,0xFFB74D,0xBA68C8,0xE57373,0x4DB6AC,0xFFD54F,0x90A4AE,0xF06292,0xAED581,0x7986CB,0xA1887F];
+
+// ── Theme ──────────────────────────────────────────────
+(function(){
+  var s = localStorage.getItem('cdf-theme');
+  if(s==='dark') document.documentElement.dataset.theme='dark';
+})();
+function toggleTheme(){
+  var d = document.documentElement.dataset.theme === 'dark';
+  document.documentElement.dataset.theme = d ? '' : 'dark';
+  localStorage.setItem('cdf-theme', d ? 'light' : 'dark');
+  document.getElementById('theme-btn').innerHTML = d ? '&#9790; Light' : '&#9790; Dark';
+  if(renderer){
+    var bg = d ? 0xf1f5f9 : 0x030712;
+    renderer.setClearColor(bg, 1);
+  }
+  if(gridHelper){
+    var c1 = d ? 0xd1d5db : 0x2a2a3a;
+    var c2 = d ? 0xe5e7eb : 0x1a1a2e;
+    scene.remove(gridHelper);
+    gridHelper = new THREE.GridHelper(200, 40, c1, c2);
+    gridHelper.position.y = gridFloor;
+    scene.add(gridHelper);
+  }
+}
+(function(){
+  var d = document.documentElement.dataset.theme==='dark';
+  document.getElementById('theme-btn').innerHTML = d ? '&#9790; Dark' : '&#9790; Light';
+})();
+
+var gridFloor = 0;
+
+// ── Init Three.js ──────────────────────────────────────
+function initScene(){
+  var vp = document.getElementById('viewport');
+  var canvas = document.getElementById('viewer-canvas');
+  var W = vp.offsetWidth || window.innerWidth, H = vp.offsetHeight || window.innerHeight;
+
+  scene = new THREE.Scene();
+
+  camera = new THREE.PerspectiveCamera(45, (W/H) || 1, 0.01, 100000);
+  camera.position.set(80, 60, 80);
+
+  renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true, alpha:false, preserveDrawingBuffer:true});
+  renderer.setSize(W, H);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.localClippingEnabled = true;
+  var isDark = document.documentElement.dataset.theme==='dark';
+  renderer.setClearColor(isDark ? 0x030712 : 0xf1f5f9, 1);
+
+  // Lights
+  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  var key = new THREE.DirectionalLight(0xffffff, 1.0);
+  key.position.set(50, 80, 60); key.castShadow = true;
+  key.shadow.mapSize.set(1024,1024);
+  scene.add(key);
+  var fill = new THREE.DirectionalLight(0xdde8f0, 0.6);
+  fill.position.set(-40, 30, 40);
+  scene.add(fill);
+  var rim = new THREE.DirectionalLight(0xffffff, 0.3);
+  rim.position.set(0, -30, -40);
+  scene.add(rim);
+  scene.add(new THREE.HemisphereLight(0xe8f0ff, 0xf0f0e8, 0.3));
+
+  // Grid
+  var gc1 = isDark ? 0x2a2a3a : 0xd1d5db;
+  var gc2 = isDark ? 0x1a1a2e : 0xe5e7eb;
+  gridHelper = new THREE.GridHelper(200, 40, gc1, gc2);
+  scene.add(gridHelper);
+
+  // Axes
+  axesHelper = new THREE.AxesHelper(30);
+  scene.add(axesHelper);
+
+  // Controls
+  controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.screenSpacePanning = true;
+  controls.minDistance = 0.5;
+  controls.maxDistance = 50000;
+
+  // Section clip plane
+  clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+
+  // Resize
+  window.addEventListener('resize', onResize);
+
+  // Start render loop
+  animate();
+}
+
+function onResize(){
+  var vp = document.getElementById('viewport');
+  var W = vp.offsetWidth || window.innerWidth, H = vp.offsetHeight || window.innerHeight;
+  if(W < 1 || H < 1) return;
+  camera.aspect = W / H;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+  renderAxisWidget();
+}
+
+// ── Axis Widget ────────────────────────────────────────
+function renderAxisWidget(){
+  var c = document.getElementById('axis-widget');
+  var ctx = c.getContext('2d');
+  var s = 90;
+  c.width = s; c.height = s;
+  ctx.clearRect(0,0,s,s);
+
+  var dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  var up = camera.up.clone();
+  var right = new THREE.Vector3().crossVectors(dir, up).normalize();
+  up = new THREE.Vector3().crossVectors(right, dir).normalize();
+
+  var cx = s/2, cy = s/2, len = 32;
+  var axes = [
+    {v: new THREE.Vector3(1,0,0), c:'#ef4444', l:'X'},
+    {v: new THREE.Vector3(0,1,0), c:'#22c55e', l:'Y'},
+    {v: new THREE.Vector3(0,0,1), c:'#3b82f6', l:'Z'},
+  ];
+  // Sort by depth for painter's algorithm
+  axes.forEach(function(a){
+    a.sx = right.dot(a.v) * len;
+    a.sy = -up.dot(a.v) * len;
+    a.depth = dir.dot(a.v);
+  });
+  axes.sort(function(a,b){return a.depth - b.depth;});
+
+  axes.forEach(function(a){
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + a.sx, cy + a.sy);
+    ctx.strokeStyle = a.c;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.fillStyle = a.c;
+    ctx.font = 'bold 11px system-ui';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    var tx = cx + a.sx * 1.22, ty = cy + a.sy * 1.22;
+    ctx.fillText(a.l, tx, ty);
+  });
+}
+
+// ── File Loading ───────────────────────────────────────
+function openFilePicker(){
+  document.getElementById('file-input').click();
+}
+document.getElementById('file-input').addEventListener('change', function(e){
+  if(e.target.files.length) loadFile(e.target.files[0]);
+  e.target.value = '';
+});
+
+// Drag and drop
+var dropCount = 0;
+document.addEventListener('dragenter', function(e){e.preventDefault(); dropCount++; document.getElementById('drop-overlay').classList.add('show');});
+document.addEventListener('dragleave', function(e){e.preventDefault(); dropCount--; if(dropCount<=0){dropCount=0; document.getElementById('drop-overlay').classList.remove('show');}});
+document.addEventListener('dragover', function(e){e.preventDefault();});
+document.addEventListener('drop', function(e){
+  e.preventDefault(); dropCount=0;
+  document.getElementById('drop-overlay').classList.remove('show');
+  if(e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+});
+
+function showLoading(text){
+  document.getElementById('loading-text').textContent = text || 'Loading...';
+  document.getElementById('loading-overlay').classList.add('show');
+}
+function hideLoading(){
+  document.getElementById('loading-overlay').classList.remove('show');
+}
+
+async function loadFile(file){
+  var name = file.name.toLowerCase();
+  var ext = name.split('.').pop();
+
+  showLoading('Reading ' + file.name + '...');
+  setStatus('Loading ' + file.name);
+
+  try {
+    if(ext === 'stl'){
+      var buf = await file.arrayBuffer();
+      loadSTLBuffer(buf, file.name);
+    } else if(ext === 'step' || ext === 'stp'){
+      var buf = await file.arrayBuffer();
+      await loadSTEPBuffer(buf, file.name);
+    } else if(ext === 'brep'){
+      var buf = await file.arrayBuffer();
+      await loadBREPBuffer(buf, file.name);
+    } else if(ext === 'iges' || ext === 'igs'){
+      var buf = await file.arrayBuffer();
+      await loadIGESBuffer(buf, file.name);
+    } else {
+      alert('Unsupported format: .' + ext + '\nSupported: .stl, .step, .stp, .brep, .iges');
+    }
+  } catch(err){
+    console.error('Load error:', err);
+    alert('Failed to load file: ' + err.message);
+  }
+  hideLoading();
+}
+
+// ── STL Loading ────────────────────────────────────────
+function loadSTLBuffer(buffer, filename){
+  clearScene();
+  var loader = new THREE.STLLoader();
+  var geom = loader.parse(buffer);
+  geom.computeVertexNormals();
+  geom.computeBoundingBox();
+  var triCount = geom.attributes.position.count / 3;
+
+  var color = COLORS[0];
+  var mat = createMaterial(color);
+  var mesh = new THREE.Mesh(geom, mat);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  scene.add(mesh);
+
+  var wire = createWireframe(geom, color);
+  wire.visible = false;
+  scene.add(wire);
+
+  allParts.push({mesh:mesh, wireframe:wire, name:filename || 'Part', color:color, visible:true, triCount:triCount});
+  totalTriangles = triCount;
+
+  applyViewMode();
+  fitAll();
+  rebuildTree();
+  updateStatus(filename, totalTriangles);
+  setStatus('Loaded ' + filename);
+}
+
+// ── STEP Loading (occt-import-js) ──────────────────────
+async function getOCCT(){
+  if(!occtReady){
+    occtReady = occtimportjs({
+      locateFile: function(name){
+        return 'https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist/' + name;
+      }
+    });
+  }
+  return occtReady;
+}
+
+async function loadSTEPBuffer(buffer, filename){
+  showLoading('Initializing OpenCASCADE...');
+  var occt = await getOCCT();
+  showLoading('Parsing STEP file...');
+  var result = occt.ReadStepFile(new Uint8Array(buffer), null);
+  processOCCTResult(result, filename);
+}
+
+async function loadBREPBuffer(buffer, filename){
+  var occt = await getOCCT();
+  showLoading('Parsing BREP file...');
+  var result = occt.ReadBrepFile(new Uint8Array(buffer), null);
+  processOCCTResult(result, filename);
+}
+
+async function loadIGESBuffer(buffer, filename){
+  var occt = await getOCCT();
+  showLoading('Parsing IGES file...');
+  var result = occt.ReadIgesFile(new Uint8Array(buffer), null);
+  processOCCTResult(result, filename);
+}
+
+function processOCCTResult(result, filename){
+  clearScene();
+  totalTriangles = 0;
+
+  if(!result || !result.meshes || result.meshes.length === 0){
+    alert('No geometry found in file.');
+    hideLoading();
+    setStatus('No geometry in file');
+    return;
+  }
+
+  showLoading('Building 3D model (' + result.meshes.length + ' bodies)...');
+
+  for(var i = 0; i < result.meshes.length; i++){
+    var m = result.meshes[i];
+    if(!m.index || !m.index.position || m.index.position.length === 0) continue;
+
+    var geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(m.index.position, 3));
+    if(m.index.normal && m.index.normal.length > 0){
+      geom.setAttribute('normal', new THREE.Float32BufferAttribute(m.index.normal, 3));
+    }
+    if(m.index.triangle && m.index.triangle.length > 0){
+      geom.setIndex(Array.from(m.index.triangle));
+    }
+    if(!geom.attributes.normal || geom.attributes.normal.count === 0){
+      geom.computeVertexNormals();
+    }
+    geom.computeBoundingBox();
+
+    // Color from STEP metadata or palette
+    var color;
+    if(m.color && (m.color[0] !== 0 || m.color[1] !== 0 || m.color[2] !== 0)){
+      color = new THREE.Color(m.color[0], m.color[1], m.color[2]).getHex();
+    } else {
+      color = COLORS[i % COLORS.length];
+    }
+
+    var mat = createMaterial(color);
+    var mesh = new THREE.Mesh(geom, mat);
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    scene.add(mesh);
+
+    var wire = createWireframe(geom, color);
+    wire.visible = false;
+    scene.add(wire);
+
+    var triCount = m.index.triangle ? m.index.triangle.length / 3 : (m.index.position.length / 9);
+    totalTriangles += triCount;
+
+    var partName = m.name || ('Body ' + (i + 1));
+    allParts.push({mesh:mesh, wireframe:wire, name:partName, color:color, visible:true, triCount:Math.round(triCount)});
+  }
+
+  applyViewMode();
+  fitAll();
+  rebuildTree();
+  updateStatus(filename, totalTriangles);
+  setStatus('Loaded ' + filename + ' (' + result.meshes.length + ' bodies)');
+}
+
+// ── URL Loading ────────────────────────────────────────
+function showUrlModal(){
+  document.getElementById('url-modal').classList.add('show');
+  document.getElementById('url-input').focus();
+}
+function hideUrlModal(){
+  document.getElementById('url-modal').classList.remove('show');
+}
+document.getElementById('url-input').addEventListener('keydown', function(e){
+  if(e.key === 'Enter') loadFromUrlInput();
+  if(e.key === 'Escape') hideUrlModal();
+});
+
+async function loadFromUrlInput(){
+  var url = document.getElementById('url-input').value.trim();
+  if(!url) return;
+  hideUrlModal();
+  await loadFromUrl(url);
+}
+
+async function loadFromUrl(url){
+  showLoading('Fetching file...');
+  setStatus('Downloading...');
+  try {
+    // Build full URL — try API base first, fall back to page origin
+    var fullUrl = url;
+    if(!url.startsWith('http')){
+      // Try the API base URL first
+      fullUrl = API + (url.startsWith('/') ? '' : '/') + url;
+    }
+    var resp;
+    try {
+      resp = await fetch(fullUrl);
+    } catch(fetchErr){
+      // If API fetch fails (e.g. CORS / file:// origin), try relative to page origin
+      if(!url.startsWith('http') && window.location.protocol !== 'file:'){
+        fullUrl = window.location.origin + (url.startsWith('/') ? '' : '/') + url;
+        resp = await fetch(fullUrl);
+      } else {
+        throw fetchErr;
+      }
+    }
+    if(!resp.ok) throw new Error('HTTP ' + resp.status);
+    var buf = await resp.arrayBuffer();
+    var filename = url.split('/').pop().split('?')[0] || 'model';
+    var ext = filename.split('.').pop().toLowerCase();
+
+    if(ext === 'step' || ext === 'stp'){
+      await loadSTEPBuffer(buf, filename);
+    } else if(ext === 'brep'){
+      await loadBREPBuffer(buf, filename);
+    } else if(ext === 'iges' || ext === 'igs'){
+      await loadIGESBuffer(buf, filename);
+    } else {
+      loadSTLBuffer(buf, filename);
+    }
+  } catch(err){
+    console.error('URL load error:', err);
+    setStatus('Load failed: ' + err.message);
+    showLoading('Failed to load: ' + err.message);
+    setTimeout(hideLoading, 3000);
+    return;
+  }
+  hideLoading();
+}
+
+// ── Materials ──────────────────────────────────────────
+function createMaterial(color){
+  return new THREE.MeshPhongMaterial({
+    color: color,
+    specular: 0x333333,
+    shininess: 80,
+    side: THREE.DoubleSide,
+    clippingPlanes: sectionActive ? [clipPlane] : [],
+    clipShadows: true,
+  });
+}
+function createWireframe(geom, color){
+  var edges = new THREE.EdgesGeometry(geom, 15);
+  return new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
+    color: color,
+    opacity: 0.6,
+    transparent: true,
+    clippingPlanes: sectionActive ? [clipPlane] : [],
+  }));
+}
+
+// ── Clear Scene ────────────────────────────────────────
+function clearScene(){
+  allParts.forEach(function(p){
+    scene.remove(p.mesh);
+    scene.remove(p.wireframe);
+    p.mesh.geometry.dispose();
+    p.mesh.material.dispose();
+    p.wireframe.geometry.dispose();
+    p.wireframe.material.dispose();
+  });
+  allParts = [];
+  selectedIdx = -1;
+  totalTriangles = 0;
+  clearMeasurements();
+}
+
+// ── View Modes ─────────────────────────────────────────
+function setViewMode(mode){
+  viewMode = mode;
+  ['shaded','wireframe','xray'].forEach(function(m){
+    document.getElementById('mode-'+m).classList.toggle('active', m===mode);
+  });
+  applyViewMode();
+}
+
+function applyViewMode(){
+  allParts.forEach(function(p){
+    if(!p.visible){
+      p.mesh.visible = false;
+      p.wireframe.visible = false;
+      return;
+    }
+    if(viewMode === 'shaded'){
+      p.mesh.visible = true;
+      p.mesh.material.transparent = false;
+      p.mesh.material.opacity = 1;
+      p.mesh.material.wireframe = false;
+      p.wireframe.visible = false;
+    } else if(viewMode === 'wireframe'){
+      p.mesh.visible = false;
+      p.wireframe.visible = true;
+    } else if(viewMode === 'xray'){
+      p.mesh.visible = true;
+      p.mesh.material.transparent = true;
+      p.mesh.material.opacity = 0.35;
+      p.mesh.material.wireframe = false;
+      p.wireframe.visible = true;
+    }
+  });
+}
+
+// ── Standard Views ─────────────────────────────────────
+function setStdView(view){
+  var bbox = getGlobalBBox();
+  if(!bbox) return;
+  var center = new THREE.Vector3(); bbox.getCenter(center);
+  var size = new THREE.Vector3(); bbox.getSize(size);
+  var dist = Math.max(size.x, size.y, size.z) * 2;
+
+  var pos;
+  switch(view){
+    case 'front':   pos = new THREE.Vector3(center.x, center.y, center.z + dist); break;
+    case 'back':    pos = new THREE.Vector3(center.x, center.y, center.z - dist); break;
+    case 'top':     pos = new THREE.Vector3(center.x, center.y + dist, center.z); break;
+    case 'bottom':  pos = new THREE.Vector3(center.x, center.y - dist, center.z); break;
+    case 'left':    pos = new THREE.Vector3(center.x - dist, center.y, center.z); break;
+    case 'right':   pos = new THREE.Vector3(center.x + dist, center.y, center.z); break;
+    case 'iso':
+    default:        pos = new THREE.Vector3(center.x + dist*0.7, center.y + dist*0.5, center.z + dist*0.7); break;
+  }
+  animateCamera(pos, center);
+}
+
+function fitAll(){
+  var bbox = getGlobalBBox();
+  if(!bbox) return;
+  var center = new THREE.Vector3(); bbox.getCenter(center);
+  var size = new THREE.Vector3(); bbox.getSize(size);
+  var dist = Math.max(size.x, size.y, size.z) * 2;
+
+  // Position grid at model bottom
+  gridFloor = bbox.min.y;
+  if(gridHelper) gridHelper.position.y = gridFloor;
+
+  var pos = new THREE.Vector3(center.x + dist*0.7, center.y + dist*0.5, center.z + dist*0.7);
+  animateCamera(pos, center);
+}
+
+function animateCamera(targetPos, targetLook){
+  var startPos = camera.position.clone();
+  var startTarget = controls.target.clone();
+  var duration = 400;
+  var startTime = performance.now();
+
+  function step(now){
+    var t = Math.min((now - startTime) / duration, 1);
+    t = t * t * (3 - 2*t); // smoothstep
+    camera.position.lerpVectors(startPos, targetPos, t);
+    controls.target.lerpVectors(startTarget, targetLook, t);
+    controls.update();
+    if(t < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+function getGlobalBBox(){
+  if(allParts.length === 0) return null;
+  var bbox = new THREE.Box3();
+  allParts.forEach(function(p){
+    if(p.visible) {
+      var b = new THREE.Box3().setFromObject(p.mesh);
+      bbox.union(b);
+    }
+  });
+  if(bbox.isEmpty()) return null;
+  return bbox;
+}
+
+// ── Grid / Axes Toggle ─────────────────────────────────
+function toggleGrid(){
+  gridHelper.visible = !gridHelper.visible;
+  document.getElementById('toggle-grid').classList.toggle('active', gridHelper.visible);
+}
+function toggleAxes(){
+  axesHelper.visible = !axesHelper.visible;
+  document.getElementById('toggle-axes').classList.toggle('active', axesHelper.visible);
+}
+
+// ── Part Tree ──────────────────────────────────────────
+function rebuildTree(){
+  var tree = document.getElementById('part-tree');
+  if(allParts.length === 0){
+    tree.innerHTML = '<div class="tree-empty">No model loaded.<br>Open a file or drag &amp; drop.</div>';
+    showPropsEmpty();
+    return;
+  }
+  var html = '';
+  allParts.forEach(function(p, i){
+    var sel = (i === selectedIdx) ? ' selected' : '';
+    var visCls = p.visible ? '' : ' hidden-part';
+    var visIcon = p.visible ? '&#128065;' : '&#128064;';
+    var col = '#' + (p.color & 0xFFFFFF).toString(16).padStart(6, '0');
+    html += '<div class="tree-item' + sel + '" data-idx="' + i + '" onclick="selectPart(' + i + ')">';
+    html += '<button class="vis-btn' + visCls + '" onclick="event.stopPropagation();togglePartVis(' + i + ')" title="Toggle visibility">' + visIcon + '</button>';
+    html += '<div class="tree-swatch" style="background:' + col + '"></div>';
+    html += '<span class="tree-label">' + escHtml(p.name) + '</span>';
+    html += '</div>';
+  });
+  tree.innerHTML = html;
+}
+
+function selectPart(idx){
+  // Deselect old
+  if(selectedIdx >= 0 && selectedIdx < allParts.length){
+    var old = allParts[selectedIdx];
+    old.mesh.material.emissive.setHex(0x000000);
+  }
+  selectedIdx = idx;
+  // Highlight new
+  if(idx >= 0 && idx < allParts.length){
+    var p = allParts[idx];
+    p.mesh.material.emissive.setHex(0x114444);
+  }
+  rebuildTree();
+  showProps(idx);
+}
+
+function togglePartVis(idx){
+  var p = allParts[idx];
+  p.visible = !p.visible;
+  p.mesh.visible = p.visible && (viewMode !== 'wireframe');
+  p.wireframe.visible = p.visible && (viewMode === 'wireframe' || viewMode === 'xray');
+  if(viewMode === 'shaded') p.wireframe.visible = false;
+  rebuildTree();
+}
+
+function toggleAllVisibility(){
+  var anyVisible = allParts.some(function(p){return p.visible;});
+  allParts.forEach(function(p){p.visible = !anyVisible;});
+  applyViewMode();
+  rebuildTree();
+}
+
+// ── Properties Panel ───────────────────────────────────
+function showPropsEmpty(){
+  document.getElementById('props-content').innerHTML = '<div class="prop-empty">Select a part to see properties</div>';
+}
+
+function showProps(idx){
+  if(idx < 0 || idx >= allParts.length){showPropsEmpty(); return;}
+  var p = allParts[idx];
+  var bb = new THREE.Box3().setFromObject(p.mesh);
+  var size = new THREE.Vector3(); bb.getSize(size);
+  var col = '#' + (p.color & 0xFFFFFF).toString(16).padStart(6,'0');
+
+  var html = '';
+  html += '<div class="prop-group"><div class="prop-group-title">Identity</div>';
+  html += '<div class="prop-row"><span class="prop-label">Name</span><span class="prop-val">' + escHtml(p.name) + '</span></div>';
+  html += '<div class="prop-row"><span class="prop-label">Index</span><span class="prop-val">#' + idx + '</span></div>';
+  html += '</div>';
+
+  html += '<div class="prop-group"><div class="prop-group-title">Geometry</div>';
+  html += '<div class="prop-row"><span class="prop-label">Triangles</span><span class="prop-val">' + fmtNum(p.triCount) + '</span></div>';
+  html += '<div class="prop-row"><span class="prop-label">Size X</span><span class="prop-val">' + size.x.toFixed(2) + '</span></div>';
+  html += '<div class="prop-row"><span class="prop-label">Size Y</span><span class="prop-val">' + size.y.toFixed(2) + '</span></div>';
+  html += '<div class="prop-row"><span class="prop-label">Size Z</span><span class="prop-val">' + size.z.toFixed(2) + '</span></div>';
+  html += '</div>';
+
+  html += '<div class="prop-group"><div class="prop-group-title">Appearance</div>';
+  html += '<div class="prop-row"><span class="prop-label">Color</span><input type="color" class="prop-color" value="' + col + '" onchange="changePartColor(' + idx + ',this.value)"/></div>';
+  html += '<div class="prop-row"><span class="prop-label">Opacity</span><span class="prop-val" id="opacity-val">100%</span></div>';
+  html += '<input type="range" class="prop-slider" min="0" max="100" value="100" oninput="changePartOpacity(' + idx + ',this.value)"/>';
+  html += '</div>';
+
+  document.getElementById('props-content').innerHTML = html;
+}
+
+function changePartColor(idx, hex){
+  var p = allParts[idx];
+  var c = parseInt(hex.replace('#',''), 16);
+  p.color = c;
+  p.mesh.material.color.setHex(c);
+  p.wireframe.material.color.setHex(c);
+  rebuildTree();
+}
+
+function changePartOpacity(idx, val){
+  var p = allParts[idx];
+  var op = parseInt(val) / 100;
+  p.mesh.material.transparent = op < 1;
+  p.mesh.material.opacity = op;
+  p.mesh.material.needsUpdate = true;
+  var el = document.getElementById('opacity-val');
+  if(el) el.textContent = val + '%';
+}
+
+// ── Measurement Tool ───────────────────────────────────
+function toggleMeasure(){
+  measureActive = !measureActive;
+  document.getElementById('tool-measure').classList.toggle('active', measureActive);
+  if(measureActive){
+    measurePoints = [];
+    document.getElementById('viewer-canvas').style.cursor = 'crosshair';
+    setStatus('Measure: Click two points on the model');
+  } else {
+    document.getElementById('viewer-canvas').style.cursor = '';
+    setStatus('Ready');
+  }
+}
+
+document.getElementById('viewer-canvas').addEventListener('click', function(e){
+  if(!measureActive) return;
+  var rect = e.target.getBoundingClientRect();
+  var mouse = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  var raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+  var meshes = allParts.filter(function(p){return p.visible;}).map(function(p){return p.mesh;});
+  var hits = raycaster.intersectObjects(meshes);
+  if(hits.length === 0) return;
+
+  var pt = hits[0].point.clone();
+  measurePoints.push(pt);
+
+  // Add point marker
+  var dotGeo = new THREE.SphereGeometry(0.5, 8, 8);
+  var dotMat = new THREE.MeshBasicMaterial({color:0x22d3ee, depthTest:false});
+  var dot = new THREE.Mesh(dotGeo, dotMat);
+  dot.position.copy(pt);
+  dot.renderOrder = 999;
+  scene.add(dot);
+  measureObjects.push(dot);
+
+  if(measurePoints.length === 2){
+    var p1 = measurePoints[0], p2 = measurePoints[1];
+    var dist = p1.distanceTo(p2);
+
+    // Line
+    var lineGeo = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+    var lineMat = new THREE.LineBasicMaterial({color:0x22d3ee, depthTest:false, linewidth:2});
+    var line = new THREE.Line(lineGeo, lineMat);
+    line.renderOrder = 999;
+    scene.add(line);
+    measureObjects.push(line);
+
+    // Label
+    var mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+    var label = document.createElement('div');
+    label.className = 'measure-label';
+    label.textContent = dist.toFixed(2) + ' mm';
+    document.getElementById('viewport').appendChild(label);
+    measureObjects.push({isLabel:true, el:label, pos:mid});
+
+    setStatus('Distance: ' + dist.toFixed(2) + ' mm');
+    measurePoints = [];
+    // Keep tool active for more measurements
+  } else {
+    setStatus('Measure: Click second point');
+  }
+});
+
+// Update measure labels position on each frame
+var origAnimate = animate;
+function updateMeasureLabels(){
+  measureObjects.forEach(function(obj){
+    if(obj && obj.isLabel){
+      var projected = obj.pos.clone().project(camera);
+      var vp = document.getElementById('viewport');
+      var x = (projected.x * 0.5 + 0.5) * vp.offsetWidth;
+      var y = (-projected.y * 0.5 + 0.5) * vp.offsetHeight;
+      obj.el.style.left = x + 'px';
+      obj.el.style.top = y + 'px';
+      obj.el.style.transform = 'translate(-50%, -50%)';
+    }
+  });
+}
+// Patch render loop to update labels
+var _origAnimate = null;
+
+function clearMeasurements(){
+  measureObjects.forEach(function(obj){
+    if(obj && obj.isLabel){
+      if(obj.el.parentNode) obj.el.parentNode.removeChild(obj.el);
+    } else if(obj && obj.isMesh || obj && obj.isLine){
+      scene.remove(obj);
+      if(obj.geometry) obj.geometry.dispose();
+      if(obj.material) obj.material.dispose();
+    }
+  });
+  measureObjects = [];
+  measurePoints = [];
+}
+
+// ── Section Plane ──────────────────────────────────────
+function toggleSection(){
+  sectionActive = !sectionActive;
+  document.getElementById('tool-section').classList.toggle('active', sectionActive);
+
+  if(sectionActive){
+    var bbox = getGlobalBBox();
+    if(bbox){
+      var center = new THREE.Vector3(); bbox.getCenter(center);
+      clipPlane.constant = center.y + (bbox.max.y - center.y);
+    }
+    // Add section plane visual
+    if(!sectionPlane){
+      var planeGeo = new THREE.PlaneGeometry(500, 500);
+      var planeMat = new THREE.MeshBasicMaterial({
+        color:0x22d3ee, transparent:true, opacity:0.08, side:THREE.DoubleSide,
+        depthWrite: false,
+      });
+      sectionPlane = new THREE.Mesh(planeGeo, planeMat);
+      sectionPlane.rotation.x = Math.PI / 2;
+      scene.add(sectionPlane);
+    }
+    sectionPlane.visible = true;
+    sectionPlane.position.y = clipPlane.constant;
+
+    // Show section slider in props
+    showSectionProps();
+    setStatus('Section plane active — use slider to adjust');
+  } else {
+    if(sectionPlane) sectionPlane.visible = false;
+    setStatus('Ready');
+    if(selectedIdx >= 0) showProps(selectedIdx);
+    else showPropsEmpty();
+  }
+
+  // Update material clipping
+  allParts.forEach(function(p){
+    p.mesh.material.clippingPlanes = sectionActive ? [clipPlane] : [];
+    p.mesh.material.needsUpdate = true;
+    p.wireframe.material.clippingPlanes = sectionActive ? [clipPlane] : [];
+    p.wireframe.material.needsUpdate = true;
+  });
+}
+
+function showSectionProps(){
+  var bbox = getGlobalBBox();
+  if(!bbox) return;
+  var html = '<div class="prop-group"><div class="prop-group-title">Section Plane</div>';
+  html += '<div class="prop-row"><span class="prop-label">Height</span><span class="prop-val" id="section-val">' + clipPlane.constant.toFixed(1) + '</span></div>';
+  html += '<input type="range" class="prop-slider" id="section-slider" min="' + bbox.min.y.toFixed(1) + '" max="' + bbox.max.y.toFixed(1) + '" step="0.1" value="' + clipPlane.constant.toFixed(1) + '" oninput="updateSection(this.value)"/>';
+  html += '</div>';
+  document.getElementById('props-content').innerHTML = html;
+}
+
+function updateSection(val){
+  var v = parseFloat(val);
+  clipPlane.constant = v;
+  if(sectionPlane) sectionPlane.position.y = v;
+  var el = document.getElementById('section-val');
+  if(el) el.textContent = v.toFixed(1);
+}
+
+// ── Screenshot ─────────────────────────────────────────
+function takeScreenshot(){
+  renderer.render(scene, camera);
+  var dataUrl = renderer.domElement.toDataURL('image/png');
+  var a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = 'cad-viewer-screenshot.png';
+  a.click();
+  setStatus('Screenshot saved');
+}
+
+// ── Raycasting (click-select in viewport) ──────────────
+document.getElementById('viewer-canvas').addEventListener('dblclick', function(e){
+  if(measureActive) return;
+  var rect = e.target.getBoundingClientRect();
+  var mouse = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  var raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+  var meshes = allParts.filter(function(p){return p.visible;}).map(function(p){return p.mesh;});
+  var hits = raycaster.intersectObjects(meshes);
+  if(hits.length > 0){
+    var hitMesh = hits[0].object;
+    var idx = allParts.findIndex(function(p){return p.mesh === hitMesh;});
+    if(idx >= 0) selectPart(idx);
+  } else {
+    selectPart(-1);
+  }
+});
+
+// ── Status ─────────────────────────────────────────────
+function setStatus(text){
+  document.getElementById('st-status').textContent = text;
+}
+function updateStatus(filename, tris){
+  document.getElementById('st-tris').textContent = fmtNum(Math.round(tris));
+  if(filename){
+    document.getElementById('st-file').textContent = filename;
+    document.getElementById('st-file-wrap').style.display = '';
+  }
+  document.getElementById('st-parts').textContent = allParts.length;
+  document.getElementById('st-parts-wrap').style.display = allParts.length > 0 ? '' : 'none';
+}
+
+// ── Helpers ────────────────────────────────────────────
+function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function fmtNum(n){return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');}
+
+// ── URL Params ─────────────────────────────────────────
+function handleUrlParams(){
+  var params = new URLSearchParams(window.location.search);
+  var file = params.get('file');
+  var parts = params.get('parts');
+
+  if(file){
+    loadFromUrl(file);
+  } else if(parts){
+    // Multiple part URLs: ?parts=url1,url2,url3
+    loadMultipleParts(parts.split(','));
+  }
+}
+
+async function loadMultipleParts(urls){
+  showLoading('Loading ' + urls.length + ' parts...');
+  clearScene();
+  totalTriangles = 0;
+
+  var loader = new THREE.STLLoader();
+
+  for(var i = 0; i < urls.length; i++){
+    try {
+      var url = urls[i].trim();
+      if(!url) continue;
+      var fullUrl = url.startsWith('http') ? url : (API + (url.startsWith('/') ? '' : '/') + url);
+      showLoading('Loading part ' + (i+1) + '/' + urls.length + '...');
+
+      var resp = await fetch(fullUrl);
+      if(!resp.ok) continue;
+      var buf = await resp.arrayBuffer();
+
+      var filename = url.split('/').pop().split('?')[0] || ('Part ' + (i+1));
+      var ext = filename.split('.').pop().toLowerCase();
+
+      if(ext === 'step' || ext === 'stp'){
+        var occt = await getOCCT();
+        var result = occt.ReadStepFile(new Uint8Array(buf), null);
+        if(result && result.meshes){
+          result.meshes.forEach(function(m, j){
+            if(!m.index || !m.index.position || m.index.position.length === 0) return;
+            var geom = new THREE.BufferGeometry();
+            geom.setAttribute('position', new THREE.Float32BufferAttribute(m.index.position, 3));
+            if(m.index.normal) geom.setAttribute('normal', new THREE.Float32BufferAttribute(m.index.normal, 3));
+            if(m.index.triangle) geom.setIndex(Array.from(m.index.triangle));
+            geom.computeVertexNormals();
+            geom.computeBoundingBox();
+            var color = m.color ? new THREE.Color(m.color[0],m.color[1],m.color[2]).getHex() : COLORS[(allParts.length) % COLORS.length];
+            var mat = createMaterial(color);
+            var mesh = new THREE.Mesh(geom, mat);
+            mesh.castShadow = true;
+            scene.add(mesh);
+            var wire = createWireframe(geom, color);
+            wire.visible = false;
+            scene.add(wire);
+            var tc = m.index.triangle ? m.index.triangle.length/3 : m.index.position.length/9;
+            totalTriangles += tc;
+            allParts.push({mesh:mesh,wireframe:wire,name:m.name||(filename+' Body '+(j+1)),color:color,visible:true,triCount:Math.round(tc)});
+          });
+        }
+      } else {
+        var geom = loader.parse(buf);
+        geom.computeVertexNormals();
+        geom.computeBoundingBox();
+        var tc = geom.attributes.position.count / 3;
+        totalTriangles += tc;
+        var color = COLORS[allParts.length % COLORS.length];
+        var mat = createMaterial(color);
+        var mesh = new THREE.Mesh(geom, mat);
+        mesh.castShadow = true;
+        scene.add(mesh);
+        var wire = createWireframe(geom, color);
+        wire.visible = false;
+        scene.add(wire);
+        allParts.push({mesh:mesh,wireframe:wire,name:filename,color:color,visible:true,triCount:Math.round(tc)});
+      }
+    } catch(e){console.warn('Failed to load part:', urls[i], e);}
+  }
+
+  applyViewMode();
+  fitAll();
+  rebuildTree();
+  updateStatus(urls.length + ' parts', totalTriangles);
+  setStatus('Loaded ' + allParts.length + ' parts');
+  hideLoading();
+}
+
+// ── Patch render loop for measure labels ───────────────
+(function(){
+  var _raf = window.requestAnimationFrame;
+  var lastMeasureUpdate = 0;
+  var origAnimateFn = null;
+
+  // Will be called by animate's requestAnimationFrame
+  // We hook into the render by overriding after init
+  setInterval(function(){
+    if(measureObjects.length > 0) updateMeasureLabels();
+  }, 50);
+})();
+
+// ── Init ───────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function(){
+  // Detect embed mode (iframe or explicit param)
+  var params = new URLSearchParams(window.location.search);
+  var isEmbed = params.get('embed') === '1' || window.self !== window.top;
+  if(isEmbed) document.body.classList.add('embed');
+
+  initScene();
+  handleUrlParams();
+});
+</script>
+</body>
+</html>

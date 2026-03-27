@@ -124,6 +124,65 @@ ISO_CLEARANCE_HOLES: dict[str, float] = {
     "M5": 5.5, "M6": 6.6, "M8": 9.0, "M10": 11.0, "M12": 13.5,
 }
 
+# ISO 4762 Socket Head Cap Screw — counterbore dimensions {bolt_size: (cbore_dia, cbore_depth, head_height)}
+ISO_COUNTERBORE: dict[str, tuple[float, float, float]] = {
+    "M2":  (4.4,  2.0,  2.0),
+    "M2.5":(5.4,  2.5,  2.5),
+    "M3":  (6.5,  3.0,  3.0),
+    "M4":  (8.25, 4.0,  4.0),
+    "M5":  (9.75, 5.0,  5.0),
+    "M6":  (11.25,6.0,  6.0),
+    "M8":  (14.25,8.0,  8.0),
+    "M10": (17.25,10.0, 10.0),
+    "M12": (19.75,12.0, 12.0),
+}
+
+# ISO 10642 Countersink dimensions {bolt_size: (head_dia, angle_deg)}
+ISO_COUNTERSINK: dict[str, tuple[float, float]] = {
+    "M2":  (4.4,  90.0),
+    "M2.5":(5.5,  90.0),
+    "M3":  (6.3,  90.0),
+    "M4":  (8.4,  90.0),
+    "M5":  (10.4, 90.0),
+    "M6":  (12.6, 90.0),
+    "M8":  (17.3, 90.0),
+    "M10": (20.0, 90.0),
+}
+
+
+def get_hole_dimensions(bolt_size: str, hole_type: str = "through",
+                         fit_type: str = "clearance") -> dict:
+    """
+    Get precise hole dimensions for a given bolt size and hole type.
+    Returns dict with keys: diameter, depth (None=through), cbore_dia, cbore_depth, csk_dia, csk_angle.
+    """
+    result = {"diameter": 0.0, "depth": None}
+
+    # Base hole diameter
+    if fit_type == "press":
+        # Nominal diameter (tight fit)
+        nominal = float(bolt_size.replace("M", ""))
+        result["diameter"] = nominal - 0.02
+    elif fit_type == "close":
+        # Close clearance
+        nominal = float(bolt_size.replace("M", ""))
+        result["diameter"] = nominal + 0.1
+    else:
+        # Standard clearance (ISO 273 medium)
+        result["diameter"] = ISO_CLEARANCE_HOLES.get(bolt_size, float(bolt_size.replace("M", "")) + 0.5)
+
+    # Hole type additions
+    if hole_type == "counterbore" and bolt_size in ISO_COUNTERBORE:
+        cbore = ISO_COUNTERBORE[bolt_size]
+        result["cbore_dia"] = cbore[0]
+        result["cbore_depth"] = cbore[1]
+    elif hole_type == "countersink" and bolt_size in ISO_COUNTERSINK:
+        csk = ISO_COUNTERSINK[bolt_size]
+        result["csk_dia"] = csk[0]
+        result["csk_angle"] = csk[1]
+
+    return result
+
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  1. CORE GEOMETRIC FORMULAS                                                 ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
