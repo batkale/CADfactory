@@ -17,17 +17,31 @@ from collections import Counter
 
 @dataclass
 class BoundingBox:
+    """Bounding box with __slots__ for reduced memory on hot paths."""
+    __slots__ = ('x', 'y', 'z', 'min_x', 'min_y', 'min_z')
     x: float
     y: float
     z: float
-    min_x: float = 0.0
-    min_y: float = 0.0
-    min_z: float = 0.0
+    min_x: float
+    min_y: float
+    min_z: float
+
+    def __init__(self, x: float, y: float, z: float,
+                 min_x: float = 0.0, min_y: float = 0.0, min_z: float = 0.0):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.min_x = min_x
+        self.min_y = min_y
+        self.min_z = min_z
 
 
 @dataclass
 class BomItem:
     """A single BOM line item extracted from STEP."""
+    __slots__ = ('idx', 'item', 'description', 'qty', 'unit_cost', 'total_cost',
+                 'material', 'part_type', 'source', 'aliexpress_price',
+                 'amazon_price', 'aliexpress_url', 'amazon_url')
     idx: int
     item: str
     description: str
@@ -37,10 +51,31 @@ class BomItem:
     material: str
     part_type: str      # 'machined' | 'fastener' | 'bearing' | 'motor' | 'gear' | 'electronic'
     source: str
-    aliexpress_price: Optional[float] = None
-    amazon_price: Optional[float] = None
-    aliexpress_url: Optional[str] = None
-    amazon_url: Optional[str] = None
+    aliexpress_price: Optional[float]
+    amazon_price: Optional[float]
+    aliexpress_url: Optional[str]
+    amazon_url: Optional[str]
+
+    def __init__(self, idx: int, item: str, description: str, qty: int,
+                 unit_cost: float, total_cost: float, material: str,
+                 part_type: str, source: str,
+                 aliexpress_price: Optional[float] = None,
+                 amazon_price: Optional[float] = None,
+                 aliexpress_url: Optional[str] = None,
+                 amazon_url: Optional[str] = None):
+        self.idx = idx
+        self.item = item
+        self.description = description
+        self.qty = qty
+        self.unit_cost = unit_cost
+        self.total_cost = total_cost
+        self.material = material
+        self.part_type = part_type
+        self.source = source
+        self.aliexpress_price = aliexpress_price
+        self.amazon_price = amazon_price
+        self.aliexpress_url = aliexpress_url
+        self.amazon_url = amazon_url
 
 
 @dataclass
@@ -59,6 +94,40 @@ class GeometryResult:
     components: Optional[list] = field(default=None)
     units: Optional[str] = None
     bom_items: Optional[list] = field(default=None)  # List[BomItem]
+
+
+# ── Assembly BOM Cache ───────────────────────────────────────────────────────
+# Caches parsed BOM data by file content hash to avoid re-parsing
+# the same STEP assembly multiple times.
+import hashlib
+from functools import lru_cache
+
+_bom_cache: dict[str, list] = {}
+
+
+def _content_hash(data: bytes) -> str:
+    """Fast hash of file content for cache key."""
+    return hashlib.md5(data).hexdigest()
+
+
+def get_cached_bom(data: bytes, volume_cm3: float, is_assembly: bool) -> list:
+    """Return cached BOM or parse and cache it."""
+    key = _content_hash(data)
+    if key in _bom_cache:
+        return _bom_cache[key]
+    text = data.decode("utf-8", errors="replace")
+    bom = _extract_step_bom(text, volume_cm3, is_assembly)
+    _bom_cache[key] = bom
+    return bom
+
+
+def invalidate_bom_cache(data: Optional[bytes] = None) -> None:
+    """Clear BOM cache, optionally for a specific file."""
+    if data is not None:
+        key = _content_hash(data)
+        _bom_cache.pop(key, None)
+    else:
+        _bom_cache.clear()
 
 
 def _r2(n: float) -> float:
@@ -533,8 +602,8 @@ def parse_step(data: bytes) -> GeometryResult:
 
     complexity = round(min(max(face_count / 8.0, 1.0), 10.0), 1)
 
-    # Rich BOM
-    bom_items = _extract_step_bom(text, volume_cm3, is_assembly) if is_assembly or components else None
+    # Rich BOM (with caching to avoid re-parsing the same assembly)
+    bom_items = get_cached_bom(data, volume_cm3, is_assembly) if is_assembly or components else None
 
     return GeometryResult(
         file_format="STEP",

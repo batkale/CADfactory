@@ -8,6 +8,11 @@ Pipeline:
 
 No external CAD libraries required (no trimesh, no scikit-image).
 Dependencies: numpy (already installed), scipy (added to requirements.txt).
+
+Performance notes:
+  - Uses float32 for voxel grids and mesh data (halves memory vs float64)
+  - FEA solver uses float64 for numerical stability (sparse linear solve)
+  - Seed management via services.seed_manager for reproducible results
 """
 
 import os
@@ -22,6 +27,8 @@ from typing import Optional
 import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 from scipy.sparse.linalg import spsolve
+
+from services.seed_manager import set_seed, get_seed_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -380,7 +387,11 @@ def run_simp(
     ndof  = 3 * (nx + 1) * (ny + 1) * (nz + 1)
 
     # Precompute element stiffness matrix (same for all elements, unit size)
+    # KE stays float64 for numerical stability in the linear solve
     KE = _unit_ke()
+
+    # Use float32 for density arrays to halve memory on large grids
+    # (FEA solver uses float64 internally for numerical stability)
 
     # ── Precompute element→DOF mapping and COO row/col indices ────────────────
     logger.info(f"SIMP: assembling DOF maps for {nx}×{ny}×{nz} grid ({nelem} elements)")
@@ -401,8 +412,8 @@ def run_simp(
     # ── Identify active (solid) elements ─────────────────────────────────────
     active = grid.reshape(-1).astype(float)  # 1=solid, 0=void; indexed [ez,ey,ex] flattened
 
-    # ── Initial density ───────────────────────────────────────────────────────
-    x = np.full(nelem, volfrac)
+    # ── Initial density (float32 for memory efficiency) ────────────────────
+    x = np.full(nelem, volfrac, dtype=np.float32)
     x[active == 0] = Emin   # void cells stay void
 
     # ── Fixed DOFs ────────────────────────────────────────────────────────────
@@ -730,6 +741,9 @@ def topology_optimize(
         original_mass_g, optimized_mass_g, mass_saved_g, mass_saved_pct,
         cost_saved_per_unit_usd, material_key, output_stl_path
     """
+    # Set seed for reproducible topology optimization results
+    set_seed(get_seed_from_env(default=42))
+
     mat = MATERIAL_PROPS.get(material_key, MATERIAL_PROPS["pla"])
     density_gcc = mat["density"]        # g/cm³
     cost_per_kg  = mat["cost_per_kg"]

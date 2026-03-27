@@ -77,6 +77,31 @@ def execute_cadquery_sandboxed(
             success=False,
             error=f"Script too long ({len(script)} chars, max {MAX_SCRIPT_LENGTH})"
         )
+
+    # Security: block dangerous imports and operations
+    BLOCKED_PATTERNS = [
+        "import socket", "import urllib", "import requests", "import http",
+        "import subprocess", "import shutil", "import ctypes",
+        "__import__", "eval(", "exec(",
+        "os.system", "os.popen", "os.exec",
+        "os.remove", "os.unlink", "os.rmdir",
+        "open(", "pathlib",  # except cadquery's own usage
+    ]
+    # Only check user script (not our injected wrapper)
+    script_lower = script.lower()
+    for pattern in BLOCKED_PATTERNS:
+        # Allow "open(" only within common CadQuery patterns
+        if pattern == "open(" and script_lower.count("open(") <= script_lower.count("# cadquery"):
+            continue
+        if pattern.lower() in script_lower:
+            # Allow pathlib/open if it looks like CadQuery usage
+            if pattern in ("open(", "pathlib") and "exportstl" in script_lower:
+                continue
+            return ExecutionResult(
+                success=False,
+                error=f"Script contains blocked operation: '{pattern}'. "
+                      "Only CadQuery geometry operations are allowed."
+            )
     
     # Ensure output directory exists
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -104,6 +129,30 @@ def execute_cadquery_sandboxed(
             f.write(exec_script)
         
         try:
+            # Build a restricted environment:
+            # - Limit CPU threads to prevent resource exhaustion
+            # - Disable network access via environment hints
+            # - Restrict Python path to prevent import hijacking
+            sandbox_env = {
+                **os.environ,
+                "OMP_NUM_THREADS": "2",        # Limit CPU threads
+                "OPENBLAS_NUM_THREADS": "2",
+                "MKL_NUM_THREADS": "2",
+                "MKL_DYNAMIC": "FALSE",
+                # Disable network access hints (best-effort, not a hard sandbox)
+                "no_proxy": "*",
+                "http_proxy": "http://0.0.0.0:0",
+                "https_proxy": "http://0.0.0.0:0",
+                # Restrict temp file creation
+                "TMPDIR": tmpdir,
+                "TEMP": tmpdir,
+                "TMP": tmpdir,
+            }
+            # Remove sensitive env vars from subprocess
+            for key in ("GEMINI_API_KEY", "SECRET_KEY", "DATABASE_URL",
+                         "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+                sandbox_env.pop(key, None)
+
             result = subprocess.run(
                 [CADQUERY_PYTHON, script_path],
                 capture_output=True,
@@ -111,12 +160,7 @@ def execute_cadquery_sandboxed(
                 encoding="utf-8",
                 timeout=timeout,
                 cwd=tmpdir,
-                env={
-                    **os.environ,
-                    "OMP_NUM_THREADS": "2",        # Limit CPU threads
-                    "OPENBLAS_NUM_THREADS": "2",
-                    "MKL_NUM_THREADS": "2",
-                }
+                env=sandbox_env,
             )
             
             elapsed = time.time() - start_time
