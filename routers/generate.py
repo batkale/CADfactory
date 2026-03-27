@@ -1425,7 +1425,7 @@ async def serve_generated_file(filename: str):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     # Only serve expected file types
-    allowed_extensions = {".stl", ".step", ".stp", ".png", ".json"}
+    allowed_extensions = {".stl", ".step", ".stp", ".png", ".json", ".ppm"}
     ext = os.path.splitext(filename)[1].lower()
     if ext not in allowed_extensions:
         raise HTTPException(status_code=400, detail=f"File type {ext} not allowed")
@@ -1441,6 +1441,7 @@ async def serve_generated_file(filename: str):
         ".stp": "application/step",
         ".png": "image/png",
         ".json": "application/json",
+        ".ppm": "image/x-portable-pixmap",
     }
 
     return FileResponse(
@@ -1448,3 +1449,147 @@ async def serve_generated_file(filename: str):
         media_type=media_types.get(ext, "application/octet-stream"),
         filename=filename
     )
+
+
+# ---------------------------------------------------------------------------
+# Image-to-CAD generation (inspired by GenCAD)
+# ---------------------------------------------------------------------------
+
+class ImageToCADRequest(BaseModel):
+    """Request body for image-to-CAD generation."""
+    additional_context: str = Field(
+        default="",
+        max_length=500,
+        description="Extra context like 'make it 50mm tall' or 'aluminum CNC'"
+    )
+    manufacturing_method: str = Field(
+        default="fdm",
+        pattern="^(fdm|sla|sls|cnc|sheet_metal|injection)$",
+    )
+
+
+class ImageToCADResponse(BaseModel):
+    """Response from image analysis."""
+    extracted_description: str
+    confidence: float = 0.0
+    message: str = ""
+
+
+@router.post("/from-image", response_model=ImageToCADResponse)
+async def generate_from_image(
+    request: Request,
+    file: "UploadFile" = None,
+    additional_context: str = "",
+    manufacturing_method: str = "fdm",
+    current_user=Depends(get_current_user),
+):
+    """
+    Generate a CAD part description from an uploaded image.
+
+    Accepts an image (photo, sketch, napkin drawing) and uses Gemini Vision
+    to extract a geometry description. The description can then be passed
+    to the /api/generate/ endpoint for CAD generation.
+
+    Flow: Image → Gemini Vision → Text Description → (user reviews) → Generate
+    """
+    from fastapi import UploadFile, File as FastAPIFile
+    from services.image_to_cad import image_to_cad_description
+
+    if file is None:
+        raise HTTPException(status_code=400, detail="No image file uploaded")
+
+    # Validate file type
+    allowed_types = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"}
+    if file.content_type and file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported image type: {file.content_type}. "
+                   f"Allowed: {', '.join(allowed_types)}"
+        )
+
+    # Read image bytes
+    image_bytes = await file.read()
+    if len(image_bytes) > 10 * 1024 * 1024:  # 10MB limit
+        raise HTTPException(status_code=400, detail="Image too large (max 10MB)")
+
+    try:
+        description = await image_to_cad_description(
+            image_bytes=image_bytes,
+            filename=file.filename or "image.png",
+            additional_context=additional_context,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Image-to-CAD failed: {e}")
+        raise HTTPException(status_code=500, detail="Image analysis failed")
+
+    return ImageToCADResponse(
+        extracted_description=description,
+        confidence=0.7,
+        message="Description extracted. Submit to /api/generate/ to create the CAD model."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Multi-view thumbnail rendering
+# ---------------------------------------------------------------------------
+
+class MultiviewRequest(BaseModel):
+    """Request body for multi-view rendering."""
+    stl_filename: str = Field(..., description="STL filename in generated_files/")
+    width: int = Field(default=256, ge=64, le=1024)
+    height: int = Field(default=256, ge=64, le=1024)
+
+
+class MultiviewResponse(BaseModel):
+    """Response with paths to rendered views."""
+    views: dict  # {"front": "/api/generate/files/abc_front.ppm", ...}
+    count: int
+
+
+@router.post("/multiview", response_model=MultiviewResponse)
+async def render_multiview_thumbnails(
+    req: MultiviewRequest,
+    current_user=Depends(get_current_user),
+):
+    """
+    Render front/right/top/isometric thumbnails of a generated STL file.
+
+    Views are rendered in parallel for performance. Returns PPM image paths
+    that can be served via the /files/ endpoint.
+    """
+    from services.multiview_renderer import render_multiview
+
+    # Validate filename
+    if ".." in req.stl_filename or "/" in req.stl_filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    stl_path = os.path.join(OUTPUT_DIR, req.stl_filename)
+    if not os.path.exists(stl_path):
+        raise HTTPException(status_code=404, detail="STL file not found")
+
+    file_id = os.path.splitext(req.stl_filename)[0]
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: render_multiview(
+                stl_path=stl_path,
+                output_dir=OUTPUT_DIR,
+                file_id=file_id,
+                width=req.width,
+                height=req.height,
+            )
+        )
+    except Exception as e:
+        logger.error(f"Multiview rendering failed: {e}")
+        raise HTTPException(status_code=500, detail="Rendering failed")
+
+    # Convert paths to URLs
+    view_urls = {}
+    for view_name, path in result.items():
+        filename = os.path.basename(path)
+        view_urls[view_name] = f"/api/generate/files/{filename}"
+
+    return MultiviewResponse(views=view_urls, count=len(view_urls))
