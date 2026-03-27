@@ -5,8 +5,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from contextlib import asynccontextmanager
+import asyncio
 import time
 from dotenv import load_dotenv
 
@@ -48,8 +49,29 @@ async def lifespan(app: FastAPI):
         logger.info(f"OK: Upload directory ready: {upload_dir}")
     except Exception as e:
         logger.error(f"FAIL: Upload dir failed: {e}")
+    # Clean up old generated files on startup
+    try:
+        from services.cadquery_runner import cleanup_old_files
+        cleanup_old_files(max_age_hours=24)
+        logger.info("OK: Old generated files cleaned up")
+    except Exception as e:
+        logger.warning(f"File cleanup failed (non-fatal): {e}")
+
+    # Background task: repeat cleanup every 6 hours
+    async def periodic_cleanup():
+        while True:
+            await asyncio.sleep(6 * 3600)
+            try:
+                from services.cadquery_runner import cleanup_old_files
+                cleanup_old_files(max_age_hours=24)
+            except Exception:
+                pass
+
+    cleanup_task = asyncio.create_task(periodic_cleanup())
+
     logger.info("=== Server ready: http://localhost:8000 ===")
     yield
+    cleanup_task.cancel()
     logger.info("=== Server shutting down ===")
 
 
@@ -81,13 +103,24 @@ async def log_requests(request: Request, call_next):
     return response
 
 # ── CORS ─────────────────────────────────────────────────────
+_allowed_origins = os.getenv("CORS_ORIGINS", "").strip()
+_origins = [o.strip() for o in _allowed_origins.split(",") if o.strip()] if _allowed_origins else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Rate Limiting ────────────────────────────────────────────
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["30/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── Routers ───────────────────────────────────────────────────
 app.include_router(auth.router)
@@ -109,6 +142,16 @@ def root():
         "status": "online",
         "docs": "/docs",
     }
+
+
+@app.get("/app", tags=["Pages"], include_in_schema=False)
+def app_page():
+    return FileResponse("cadfactory.html", media_type="text/html")
+
+
+@app.get("/viewer", tags=["Pages"], include_in_schema=False)
+def viewer_page():
+    return FileResponse("cadviewer.html", media_type="text/html")
 
 
 @app.get("/health", tags=["Health"])

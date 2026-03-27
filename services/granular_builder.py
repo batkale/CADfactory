@@ -352,7 +352,34 @@ def build_granular_script(
                 elif shape_lower == "cylinder":
                     h_c = _const_name(label, "height")
                     r_c = _const_name(label, "radius")
-                    lines.append(f"{var} = cq.Workplane('XY').cylinder({h_c}, {r_c})")
+                    # FreeCAD-inspired: generate counterbore/countersink geometry
+                    if op.op == "subtract" and op.bolt_size and op.hole_type in ("counterbore", "countersink"):
+                        from services.engineering_math import get_hole_dimensions
+                        hole_dims = get_hole_dimensions(op.bolt_size, op.hole_type, op.fit_type or "clearance")
+                        if op.hole_type == "counterbore" and "cbore_dia" in hole_dims:
+                            cbore_r = hole_dims["cbore_dia"] / 2.0
+                            cbore_d = hole_dims["cbore_depth"]
+                            lines.append(f"# ISO 4762 counterbore for {op.bolt_size}")
+                            lines.append(f"{var} = cq.Workplane('XY').cylinder({h_c}, {r_c})")
+                            lines.append(f"_cbore_{var} = cq.Workplane('XY').cylinder({cbore_d}, {cbore_r})")
+                            bore_h = float(op.params.get("height", 10))
+                            offset_z = (bore_h - cbore_d) / 2.0
+                            lines.append(f"_cbore_{var} = _cbore_{var}.translate((0, 0, {offset_z:.3f}))")
+                            lines.append(f"{var} = {var}.union(_cbore_{var})")
+                        elif op.hole_type == "countersink" and "csk_dia" in hole_dims:
+                            csk_r = hole_dims["csk_dia"] / 2.0
+                            lines.append(f"# ISO 10642 countersink for {op.bolt_size}")
+                            lines.append(f"{var} = cq.Workplane('XY').cylinder({h_c}, {r_c})")
+                            bore_h = float(op.params.get("height", 10))
+                            csk_depth = csk_r - float(op.params.get("radius", 2))
+                            lines.append(f"_csk_{var} = cq.Workplane('XY').add(cq.Solid.makeCone({csk_r}, {r_c}, {csk_depth:.3f}))")
+                            offset_z = (bore_h - csk_depth) / 2.0
+                            lines.append(f"_csk_{var} = _csk_{var}.translate((0, 0, {offset_z:.3f}))")
+                            lines.append(f"{var} = {var}.union(_csk_{var})")
+                        else:
+                            lines.append(f"{var} = cq.Workplane('XY').cylinder({h_c}, {r_c})")
+                    else:
+                        lines.append(f"{var} = cq.Workplane('XY').cylinder({h_c}, {r_c})")
 
                 elif shape_lower == "box":
                     l_c = _const_name(label, "length")

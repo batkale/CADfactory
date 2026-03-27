@@ -153,7 +153,7 @@ async def refine_script_layer8(
     Returns RefinedScript with the densified, fully parametric script.
     Falls back to returning the original script if AI overhaul fails.
     """
-    from services.claude_cad import _generate_content, MODEL_PRO
+    from services.claude_cad import _generate_content, MODEL_PRO, MODEL_FLASH
     from services.script_utils import extract_python_code, validate_script
 
     original_lines = script.count("\n") + 1
@@ -177,7 +177,9 @@ async def refine_script_layer8(
     refined_script = None
     for attempt in range(2):
         try:
-            raw = _generate_content(MODEL_PRO, _LAYER8_REFINER_PROMPT, user_msg)
+            # Use Pro for first attempt, Flash for retries (faster + cheaper)
+            model = MODEL_PRO if attempt == 0 else MODEL_FLASH
+            raw = _generate_content(model, _LAYER8_REFINER_PROMPT, user_msg)
             candidate = extract_python_code(raw)
             if not candidate:
                 logger.warning(f"Layer 8 attempt {attempt+1}: no Python code extracted")

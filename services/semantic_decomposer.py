@@ -29,6 +29,10 @@ class CSGOperation(BaseModel):
     rotation: Optional[List[float]] = None  # [rx, ry, rz] degrees
     copies: Optional[int] = None
     copy_angle_step: Optional[float] = None  # degrees between copies
+    # FreeCAD-inspired hole metadata (optional — used for engineering-grade holes)
+    hole_type: Optional[str] = None  # "through", "blind", "counterbore", "countersink"
+    bolt_size: Optional[str] = None  # "M3", "M4", "M5", "M6", etc.
+    fit_type: Optional[str] = None   # "clearance", "close", "press"
 
 
 class DecomposedObject(BaseModel):
@@ -153,17 +157,48 @@ SYMMETRY & ASSEMBLY RULES
 ════════════════════════════════════════════════════════════════════════════════
 FUNCTIONAL INTEGRATION & CORE BORES (MANDATORY)
 ════════════════════════════════════════════════════════════════════════════════
-3. CONSUMER ASSEMBLIES (Dispensers, Sprayers, Gadgets):
+
+*** HOLES, BORES & OPENINGS — CRITICAL RULE ***
+Every functional object has holes. You MUST identify and include ALL holes:
+  • BEARING SEATS:   op="subtract", cylinder with r = bearing_OD/2 + 0.05mm clearance
+  • MOUNTING HOLES:  op="subtract", cylinder with ISO clearance (M3→r=1.7, M4→r=2.25)
+  • SOCKET OPENINGS: op="subtract", box with plug-standard dimensions
+  • AXLE BORES:      op="subtract", cylinder through the rotation axis
+  • CAVITIES:        op="subtract", shape slightly smaller than the outer body
+
+COMMON OBJECTS AND THEIR REQUIRED HOLES:
+  • Fidget spinner:  1x center bearing bore (r=11.05, h=8) + 3x arm bearing bores
+  • Extension cable: Nx rectangular socket openings (box cuts for each plug)
+  • Soap dispenser:  1x body cavity (hollow interior) + 1x pump tube channel
+  • Gear/Pulley:     1x center axle bore
+  • Bracket:         2-4x mounting holes (through-holes for bolts)
+  • Enclosure:       1x main cavity + Nx cable/connector openings
+  • Wheel:           1x axle bore + optional weight-reduction pockets
+
+If you are unsure whether holes are needed, ADD THEM. It is always better to
+include subtract operations for functional openings than to omit them.
+Every "subtract" operation MUST have a unique, descriptive label (e.g.
+"center_bearing_bore", "arm_bearing_hole_1", "plug_opening_left").
+
+1. CONSUMER ASSEMBLIES (Dispensers, Sprayers, Gadgets):
    • ALWAYS decompose into at least 5 overlapping parts: Body (rounded), Neck (cylinder), Pump Hub (cylinder), Spout (curved or angled), and Plunger Button.
    • NEVER simplify these into a single primitive; the "identity" of the product comes from the assembly of these 5 components.
    • Ensure 2mm structural overlap between ALL joined components (Body/Neck, Neck/Hub, Hub/Spout, etc.).
 
-4. HOLLOW CONTAINERS & SHELLS (Bathtubs, Cups, Boxes):
+2. HOLLOW CONTAINERS & SHELLS (Bathtubs, Cups, Boxes):
    • If it's a container, it MUST have a "Main Body" and a "Main Cavity" (op=subtract).
    • The cavity should be slightly smaller than the body (e.g. body_r=50, cavity_r=47.5 for 2.5mm wall).
    • The cavity MUST be positioned such that it opens at the top (z-position offset).
+
 3. INTERNAL CAVITIES:
    • If it's a 'case' or 'shell', subtract the inner volume first.
+
+4. ELECTRICAL DEVICES (Extension cables, power strips, outlets):
+   • Main body = rectangular box or rounded_box
+   • Each socket opening = op="subtract" box cut with standard plug dimensions
+   • For UK Type G plugs: each opening ~23×14mm
+   • For EU Schuko/Europlug: each opening ~19×19mm or round ~4.8mm pin holes
+   • Cable entry hole at one end = op="subtract" cylinder
 
 ════════════════════════════════════════════════════════════════════════════════
 STEP 1 — OBJECT RECOGNITION
@@ -283,10 +318,11 @@ Return ONLY valid JSON, nothing else:
 # ── Core function ──────────────────────────────────────────────────────────────
 
 def decompose_prompt(
-    user_prompt: str, 
+    user_prompt: str,
     reference_dna: str = "",
     specific_guidance: str = "",
-    rag_examples: list[dict] | None = None
+    rag_examples: list[dict] | None = None,
+    expectations=None,
 ) -> DecomposedObject:
     """
     Convert a freeform text prompt into a structured DecomposedObject.
@@ -294,14 +330,72 @@ def decompose_prompt(
     Calls Gemini Flash (fast, cheap) to analyse the prompt and return a
     CSG tree. Dynamic reference_dna and specific_guidance are injected.
     Approved examples (RAG) are provided as few-shot context.
+
+    Also researches object expectations (holes, features) and injects them
+    into the prompt so the decomposer knows exactly what features are needed.
     """
     from services.claude_cad import _generate_content, MODEL_FLASH
     from services.script_utils import parse_json_response
 
     system_prompt = _DECOMPOSE_SYSTEM_PROMPT.replace("{reference_dna}", reference_dna)
-    
+
     if specific_guidance:
         system_prompt += f"\n\nOBJECT-SPECIFIC ARCHITECTURAL GUIDANCE:\n{specific_guidance}\n"
+
+    # Fast path: check the local knowledge database first (no API call)
+    try:
+        from services.object_knowledge import get_knowledge_injection
+        knowledge_injection = get_knowledge_injection(user_prompt)
+        if knowledge_injection:
+            system_prompt += knowledge_injection
+            logger.info(f"Decomposer enriched with local object knowledge")
+    except Exception as e:
+        logger.warning(f"Object knowledge lookup failed (non-fatal): {e}")
+
+    # Pre-research: find out what holes/features this object needs via AI
+    # If expectations were pre-computed by the pipeline, reuse them (saves 1 API call)
+    try:
+        if expectations is None:
+            from services.ai_validator import research_object_expectations
+            expectations = research_object_expectations(user_prompt)
+        if expectations.expected_holes or expectations.critical_features:
+            holes_text = "\n".join(
+                f"  - {h.get('count', 1)}x {h.get('purpose', '?')}: "
+                f"diameter={h.get('diameter_mm', '?')}mm at {h.get('position', '?')}"
+                for h in expectations.expected_holes
+            )
+            features_text = "\n".join(f"  - {f}" for f in expectations.critical_features)
+            cavities_text = "\n".join(
+                f"  - {c.get('purpose', '?')}: {c.get('shape', '?')}"
+                for c in expectations.expected_cavities
+            )
+            system_prompt += f"""
+
+═══════════════════════════════════════════════════════════════════════════════
+AI OBJECT RESEARCH — MANDATORY FEATURES FOR "{expectations.object_name}"
+═══════════════════════════════════════════════════════════════════════════════
+{expectations.description}
+
+REQUIRED HOLES (MUST be op="subtract" cylinder/box operations):
+{holes_text or '  None identified'}
+
+REQUIRED CAVITIES (MUST be op="subtract" operations):
+{cavities_text or '  None identified'}
+
+CRITICAL FEATURES (object will NOT function without these):
+{features_text or '  None identified'}
+
+Expected dimensions: {expectations.expected_dimensions}
+Expected symmetry: {expectations.expected_symmetry or 'unknown'}
+
+YOU MUST INCLUDE ALL OF THESE AS subtract OPERATIONS IN YOUR CSG TREE.
+"""
+            logger.info(
+                f"Decomposer enriched with {len(expectations.expected_holes)} hole groups, "
+                f"{len(expectations.critical_features)} critical features"
+            )
+    except Exception as e:
+        logger.warning(f"Pre-decompose object research failed (non-fatal): {e}")
 
     if rag_examples:
         system_prompt += "\n\n--- REFERENCE ASSEMBLY PATTERNS (Successful Past Generations) ---"

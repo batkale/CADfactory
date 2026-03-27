@@ -227,6 +227,22 @@ async def run_precision_pipeline(
                          error=f"Layer 4 failed: {exc}")
 
     # ══════════════════════════════════════════════════════════════════════
+    # PRE-RESEARCH: Object expectations (shared by Decomposer + L9 Validator)
+    # Single Gemini Flash call instead of two duplicate calls
+    # ══════════════════════════════════════════════════════════════════════
+    shared_expectations = None
+    try:
+        from services.ai_validator import research_object_expectations
+        shared_expectations = research_object_expectations(prompt)
+        logger.info(
+            f"[Pre-Research] '{shared_expectations.object_name}': "
+            f"{len(shared_expectations.expected_holes)} hole groups, "
+            f"{len(shared_expectations.critical_features)} critical features"
+        )
+    except Exception as exc:
+        logger.warning(f"[Pre-Research] object expectations failed (non-fatal): {exc}")
+
+    # ══════════════════════════════════════════════════════════════════════
     # CSG DECOMPOSITION (semantic_decomposer — between L4 and L5)
     # Uses the refined prompt enriched by L1-L4 context
     # ══════════════════════════════════════════════════════════════════════
@@ -235,11 +251,23 @@ async def run_precision_pipeline(
         from services.semantic_decomposer import decompose_prompt
         # Build an enriched prompt from the spec
         enriched_prompt = _build_enriched_prompt(prompt, spec, constraints)
+
+        # Inject object knowledge from local DB if available
+        obj_specific_guidance = match_res.specific_guidance if 'match_res' in locals() else ""
+        try:
+            from services.object_knowledge import get_knowledge_injection
+            knowledge = get_knowledge_injection(prompt)
+            if knowledge:
+                obj_specific_guidance += "\n" + knowledge
+        except Exception:
+            pass
+
         decomposed = decompose_prompt(
-            enriched_prompt, 
+            enriched_prompt,
             reference_dna=reference_dna,
-            specific_guidance=match_res.specific_guidance if 'match_res' in locals() else "",
-            rag_examples=rag_examples
+            specific_guidance=obj_specific_guidance,
+            rag_examples=rag_examples,
+            expectations=shared_expectations,
         )
         ops = decomposed.operations
 
@@ -331,6 +359,15 @@ async def run_precision_pipeline(
     final_script = layer7_script  # fallback if L8 skipped or fails
     detail_multiplier = 1.0
 
+    # Auto-skip L8 for high-confidence template-matched objects (saves 3-8s + 1 API call)
+    template_matched = 'match_res' in locals() and getattr(match_res, 'template_key', None)
+    if not skip_layer8 and template_matched and decomposed.confidence >= 0.9:
+        skip_layer8 = True
+        logger.info(
+            f"[L8] Auto-skipped: template='{match_res.template_key}', "
+            f"decomposer_conf={decomposed.confidence:.2f}"
+        )
+
     if not skip_layer8:
         t = time.time()
         try:
@@ -369,6 +406,52 @@ async def run_precision_pipeline(
         reports.append(LayerReport(
             layer=8, name="Script Linting & Precision Overhaul (skipped)",
             confidence=0.7, notes="Layer 8 disabled for this run",
+        ))
+
+    # ══════════════════════════════════════════════════════════════════════
+    # LAYER 9 — AI Geometric Validation & Self-Correction
+    # ══════════════════════════════════════════════════════════════════════
+    t = time.time()
+    try:
+        from services.ai_validator import validate_and_correct
+        corrected_script, validation = await validate_and_correct(
+            final_script, prompt, expectations=shared_expectations
+        )
+        l9_conf = validation.confidence
+        l9_notes = validation.validation_notes or "OK"
+
+        if validation.corrections_applied > 0 and corrected_script != final_script:
+            from services.script_utils import validate_script as lint_script
+            is_valid_v, _ = lint_script(corrected_script)
+            if is_valid_v:
+                final_script = corrected_script
+                l9_notes = (
+                    f"Corrected {validation.corrections_applied} round(s). "
+                    f"{len(validation.missing_holes)} hole groups added. "
+                    f"{validation.validation_notes}"
+                )
+                logger.info(f"[L9] Validation corrected script (conf={l9_conf:.2f})")
+            else:
+                l9_notes = f"Correction failed lint — keeping original. {validation.validation_notes}"
+                logger.warning("[L9] Corrected script failed lint")
+
+        reports.append(LayerReport(
+            layer=9, name="AI Geometric Validation",
+            elapsed_s=_t(t),
+            confidence=l9_conf,
+            warnings=[
+                f"[{iss.severity}] {iss.feature}: {iss.expected}"
+                for iss in validation.issues if iss.severity == "critical"
+            ],
+            notes=l9_notes[:200],
+        ))
+        logger.info(f"[L9] validation confidence={l9_conf:.2f}")
+    except Exception as exc:
+        logger.error(f"[L9] validation failed (non-fatal): {exc}", exc_info=True)
+        reports.append(LayerReport(
+            layer=9, name="AI Geometric Validation (skipped)",
+            elapsed_s=_t(t), confidence=0.7,
+            notes=f"Skipped due to error: {exc}",
         ))
 
     # ══════════════════════════════════════════════════════════════════════

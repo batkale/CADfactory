@@ -913,6 +913,34 @@ SHAPE_RESEARCH_INJECTION = """
 
 Generate a CadQuery script that matches this standard physical form.
 The script MUST produce geometry that looks like the real-world object described above.
+
+MULTI-STRATEGY GENERATION GUIDELINES:
+Choose the BEST CadQuery strategy based on the object's geometry:
+
+1. CSG BOOLEAN (Default): Use .box(), .cylinder(), .union(), .cut() for objects made of
+   simple primitives (brackets, enclosures, spinners, mounts).
+
+2. SKETCH + EXTRUDE: Use .rect().extrude() or .circle().extrude() for objects best described
+   as 2D profiles extruded to 3D (plates, flanges, gaskets, custom cross-sections).
+   Example: result = cq.Workplane("XY").rect(100, 50).extrude(5).edges("|Z").fillet(3)
+
+3. REVOLVE: Use .circle().revolve() for rotationally symmetric objects
+   (bottles, vases, cups, shafts, turned parts).
+   Example: pts = [(0,0), (10,0), (12,30), (8,50), (0,50)]
+            result = cq.Workplane("XZ").polyline(pts).close().revolve()
+
+4. LOFT: Use .loft() for objects that transition between different cross-sections
+   (aerodynamic shapes, handles, organic forms).
+
+5. SWEEP: Use .sweep() for objects that follow a path (pipes, cables, hooks, curved handles).
+
+HOLE GENERATION RULES (CRITICAL — objects MUST have their functional holes):
+- For bearing holes: result = result.faces(">Z").workplane().hole(22.1)
+- For bolt holes: result = result.faces(">Z").workplane().pushPoints([...]).hole(3.4)
+- For counterbore holes: result = result.faces(">Z").workplane().cboreHole(3.4, 6.5, 3.0)
+- For countersink holes: result = result.faces(">Z").workplane().cskHole(3.4, 6.3, 82)
+- For rectangular openings: Cut a box from the result
+- ALWAYS include ALL functional holes the object needs to work
 """
 
 

@@ -22,13 +22,17 @@ import json as _json
 import logging
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 import security as auth_utils
 get_current_user = auth_utils.get_current_user
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+limiter = Limiter(key_func=get_remote_address)
 
 from config.prompts import (
     DESIGN_PLAN_PROMPT, DESIGN_PLAN_TO_CODE_TEMPLATE,
@@ -249,7 +253,8 @@ def _save_generated_part(
 # ---------------------------------------------------------------------------
 
 @router.post("/", response_model=GenerateResponse)
-async def generate_part(req: GenerateRequest, user=Depends(get_current_user)):
+@limiter.limit("10/minute")
+async def generate_part(request: Request, req: GenerateRequest, user=Depends(get_current_user)):
     """
     Generate a 3D part from a natural language description.
     Uses two-pass Gemini pipeline: Flash for design plan, Pro for code.
@@ -312,7 +317,9 @@ async def generate_part(req: GenerateRequest, user=Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 @router.post("/precision", response_model=GenerateResponse)
+@limiter.limit("10/minute")
 async def generate_part_precision(
+    request: Request,
     req: GenerateRequest,
     user=Depends(get_current_user),
     skip_layer8: bool = Query(
@@ -470,7 +477,8 @@ async def generate_part_precision(
 
 
 @router.post("/stream")
-async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
+@limiter.limit("10/minute")
+async def generate_stream(request: Request, req: GenerateRequest, user=Depends(get_current_user)):
     """
     Same as POST /api/generate/ but streams progress via Server-Sent Events.
 
@@ -814,7 +822,44 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
             })
             return
 
-        # ── Stage 5: Export complete ──────────────────────────────────────────
+        # ── Stage 5: AI Validation & Correction ──────────────────────────────
+        yield sse("progress", {"stage": "validating",
+                                "label": "Validating design accuracy...",
+                                "done": False})
+
+        validation_confidence = decomposed.confidence
+        try:
+            from services.ai_validator import validate_and_correct
+            validated_script, validation = await validate_and_correct(script, req.description)
+            validation_confidence = validation.confidence
+
+            if validation.corrections_applied > 0 and validated_script != script:
+                is_valid_v, _ = validate_script(validated_script)
+                if is_valid_v:
+                    corrected_result = await asyncio.to_thread(
+                        execute_cadquery_sandboxed, validated_script
+                    )
+                    if corrected_result.success:
+                        script = validated_script
+                        result = corrected_result
+                        all_warnings.append(
+                            f"AI validation corrected {validation.corrections_applied} round(s), "
+                            f"confidence: {validation.confidence:.0%}"
+                        )
+                    else:
+                        all_warnings.append(f"AI validation confidence: {validation.confidence:.0%} (correction failed)")
+                else:
+                    all_warnings.append(f"AI validation confidence: {validation.confidence:.0%} (correction failed lint)")
+            elif validation.confidence < 0.7:
+                all_warnings.append(f"AI validation confidence: {validation.confidence:.0%} — model may not fully match description")
+        except Exception as e:
+            logger.warning(f"AI validation failed in stream (non-fatal): {e}")
+
+        yield sse("progress", {"stage": "validating",
+                                "label": "Validation complete",
+                                "done": True})
+
+        # ── Stage 6: Export complete ──────────────────────────────────────────
         yield sse("progress", {"stage": "exporting",
                                 "label": "Exporting STL...",
                                 "done": True})
@@ -850,7 +895,7 @@ async def generate_stream(req: GenerateRequest, user=Depends(get_current_user)):
             "generation_time_s": round(total_time, 2),
             "part_id": part_id,
             "pipeline": "ai_fallback",
-            "confidence": decomposed.confidence,
+            "confidence": validation_confidence,
             "object_name": decomposed.object_name,
             "dims_estimated": decomposed.dims_are_estimated,
         })
