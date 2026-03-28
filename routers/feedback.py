@@ -11,15 +11,16 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 import models
-from database import get_db
 import security as _sec
-get_current_user = _sec.get_current_user
+from database import get_db
 from services import rag_store
+
+get_current_user = _sec.get_current_user
 
 logger = logging.getLogger(__name__)
 

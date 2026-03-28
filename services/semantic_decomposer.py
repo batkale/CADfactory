@@ -11,8 +11,7 @@ Location: cadfactory-backend/services/semantic_decomposer.py
 from __future__ import annotations
 
 import logging
-import math
-from typing import Optional, List, Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -334,7 +333,7 @@ def decompose_prompt(
     Also researches object expectations (holes, features) and injects them
     into the prompt so the decomposer knows exactly what features are needed.
     """
-    from services.claude_cad import _generate_content, MODEL_FLASH
+    from services.claude_cad import MODEL_FLASH, _generate_content
     from services.script_utils import parse_json_response
 
     system_prompt = _DECOMPOSE_SYSTEM_PROMPT.replace("{reference_dna}", reference_dna)
@@ -348,7 +347,7 @@ def decompose_prompt(
         knowledge_injection = get_knowledge_injection(user_prompt)
         if knowledge_injection:
             system_prompt += knowledge_injection
-            logger.info(f"Decomposer enriched with local object knowledge")
+            logger.info("Decomposer enriched with local object knowledge")
     except Exception as e:
         logger.warning(f"Object knowledge lookup failed (non-fatal): {e}")
 
@@ -450,7 +449,7 @@ YOU MUST INCLUDE ALL OF THESE AS subtract OPERATIONS IN YOUR CSG TREE.
             logger.warning(f"Skipping malformed CSG operation: {e} — {op}")
 
     confidence = float(data.get("confidence", 0.0))
-    
+
     # Coerce modifiers to strings to avoid Pydantic validation errors
     raw_modifiers = data.get("modifiers") or []
     modifiers = [str(m) for m in raw_modifiers]
@@ -490,7 +489,8 @@ def _error_result(user_prompt: str) -> DecomposedObject:
 # ── Quick test ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import os, json
+    import json
+    import os
     os.environ.setdefault("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
 
     for prompt in ["triangular fidget spinner", "makeup sponge"]:

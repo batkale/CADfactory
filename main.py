@@ -1,24 +1,30 @@
-import sys
-import os
 import logging
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
-from contextlib import asynccontextmanager
 import asyncio
 import time
-from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
-from database import engine, Base
+from dotenv import load_dotenv
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
 import models  # noqa: F401 — ensures models are registered before create_all
-from routers import auth, files, analysis, materials
-from routers.generate import router as generate_router
-from routers.topology import router as topology_router
+from database import Base, engine
+from routers import analysis, auth, files, materials
 from routers.feedback import router as feedback_router
 from routers.fine_tune import router as fine_tune_router
+from routers.generate import router as generate_router
 from routers.search import router as search_router
+from routers.topology import router as topology_router
+
 load_dotenv()
 
 # ── Logging setup ─────────────────────────────────────────────
@@ -114,10 +120,6 @@ app.add_middleware(
 )
 
 # ── Rate Limiting ────────────────────────────────────────────
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-
 limiter = Limiter(key_func=get_remote_address, default_limits=["30/minute"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

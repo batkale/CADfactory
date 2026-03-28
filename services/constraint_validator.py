@@ -9,19 +9,19 @@ Location: cadfactory-backend/services/constraint_validator.py
 
 from __future__ import annotations
 
-import math
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
-from services.param_sorter import SortedParams
 from services.engineering_math import (
-    circle_area, cylinder_volume, hollow_shell_volume, aspect_ratio,
-    golden_ratio_score, wall_thickness_check, draft_taper_radius,
-    max_tensile_stress, lookup_reference_dims, g2_fillet_radius,
-    min_fillet_from_wall, iso_tolerance_microns,
-    MIN_WALL_THICKNESS, INDUSTRIAL_DB, PHI,
+    MIN_WALL_THICKNESS,
+    PHI,
+    cylinder_volume,
+    golden_ratio_score,
+    lookup_reference_dims,
 )
+from services.param_sorter import SortedParams
 
 logger = logging.getLogger(__name__)
 

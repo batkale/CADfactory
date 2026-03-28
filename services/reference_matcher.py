@@ -5,8 +5,10 @@ Used to inject standard-specific DNA into the generation layers.
 """
 
 import logging
-from typing import Optional, List
+from typing import List, Optional
+
 from pydantic import BaseModel
+
 from services.mechanical_registry import MECHANICAL_REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -31,7 +33,7 @@ one of the following GENERAL MECHANICAL PATTERNS:
 
 Return "null" for the key if no specific pattern matches well.
 
-In addition to the key, provide "specific_guidance" for the object. 
+In addition to the key, provide "specific_guidance" for the object.
 For CONSUMER PRODUCTS (e.g. soap dispenser), you MUST mandate a multi-part assembly decomposition:
 - "Soap Dispenser": guidance="Decompose into 5 overlapping parts: Body (rounded), 28mm Neck, cylindrical Pump Hub, curved Spout, and top Plunger Button."
 - "Fidget Spinner": guidance="Decompose into Hub + 3 Radial Arms. Hub MUST have 22.1mm bearing bore. Arms MUST overlap hub by 2mm."
@@ -51,22 +53,22 @@ def match_reference(prompt: str, object_category: str) -> MatchResult:
     """
     Match the prompt against the mechanical registry.
     """
-    from services.claude_cad import _generate_content, MODEL_FLASH
+    from services.claude_cad import MODEL_FLASH, _generate_content
     from services.script_utils import parse_json_response
-    
+
     user_input = f"Prompt: {prompt}\nCategory: {object_category}"
-    
+
     try:
         raw = _generate_content(MODEL_FLASH, _MATCHER_SYSTEM_PROMPT, user_input)
         data = parse_json_response(raw)
-        
+
         if not data or not isinstance(data, dict):
             return MatchResult(template_key=None, confidence=0.0, reasoning="API error")
-            
+
         key = data.get("template_key")
         if key not in MECHANICAL_REGISTRY:
             key = None
-            
+
         return MatchResult(
             template_key=key,
             confidence=float(data.get("confidence", 0.0)),

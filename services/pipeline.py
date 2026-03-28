@@ -22,10 +22,13 @@ Location: cadfactory-backend/services/pipeline.py
 
 from __future__ import annotations
 
-import time
 import logging
-from typing import Optional, List, Dict, Any
+import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from services.gap_filler import RefinedSpec
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +149,7 @@ async def run_precision_pipeline(
         else:
             reference_dna = ""
             logger.info("[L1.5] No specific mechanical template matched.")
-            
+
         reports.append(LayerReport(
             layer=1.5, name="Reference Standard Matching",
             elapsed_s=_t(t),

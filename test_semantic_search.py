@@ -3,19 +3,15 @@ Integration Test Cases for Semantic Search
 Tests the ranking system with realistic CADfactory scenarios
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from services.semantic_search import (
-    detect_semantic_features,
-    keyword_match_score,
-    feature_alignment_score,
     composite_ranking_score,
-    get_semantic_explanation,
-    SearchResult,
+    detect_semantic_features,
 )
-
 
 # =============================================================================
 # TEST CASES
@@ -98,20 +94,20 @@ def run_test_scenario(scenario):
     print(f"TEST: {scenario['name']}")
     print(f"Query: '{scenario['query']}'")
     print(f"{'='*80}\n")
-    
+
     query = scenario['query']
     parts = scenario['parts']
-    
+
     scores = []
-    
+
     # Score each part
     for part in parts:
         print(f"Part: {part['name']}")
         print(f"Description: {part['description'][:70]}...")
-        
+
         # Detect features
         features = detect_semantic_features(part['description'], part.get('bom'))
-        
+
         # Score
         score, breakdown = composite_ranking_score(
             query=query,
@@ -119,13 +115,13 @@ def run_test_scenario(scenario):
             manufacturing_method=part['manufacturing'],
             features=features
         )
-        
+
         print(f"Features detected: {[f.name for f in features]}")
         print(f"Score: {score:.1f}/100")
         print(f"Keyword match: {breakdown['keyword_match']:.1%}")
         print(f"Feature alignment: {breakdown['feature_alignment']:.1%}")
         print()
-        
+
         scores.append({
             'name': part['name'],
             'expected_rank': part['expected_rank'],
@@ -133,23 +129,23 @@ def run_test_scenario(scenario):
             'features': features,
             'breakdown': breakdown
         })
-    
+
     # Sort and display ranking
     print("RANKING:")
     print("-" * 80)
     ranked = sorted(scores, key=lambda x: x['score'], reverse=True)
-    
+
     test_passed = True
     for i, item in enumerate(ranked, 1):
         status = "✅" if i == item['expected_rank'] else "❌"
         print(f"{status} Rank #{i}: {item['name']} - {item['score']:.1f}/100 (expected rank: {item['expected_rank']})")
         if i != item['expected_rank']:
             test_passed = False
-    
+
     print("-" * 80)
     result = "PASSED" if test_passed else "FAILED"
     print(f"Result: {result}")
-    
+
     return test_passed
 
 
@@ -157,7 +153,7 @@ def main():
     print("\n" + "="*80)
     print("SEMANTIC SEARCH INTEGRATION TESTS")
     print("="*80)
-    
+
     results = []
     for scenario in TEST_SCENARIOS:
         passed = run_test_scenario(scenario)
@@ -165,26 +161,26 @@ def main():
             'name': scenario['name'],
             'passed': passed
         })
-    
+
     # Summary
     print("\n\n" + "="*80)
     print("SUMMARY")
     print("="*80 + "\n")
-    
+
     passed_count = sum(1 for r in results if r['passed'])
     total_count = len(results)
-    
+
     for result in results:
         status = "✅ PASSED" if result['passed'] else "❌ FAILED"
         print(f"{status}: {result['name']}")
-    
+
     print(f"\nOverall: {passed_count}/{total_count} scenarios passed")
-    
+
     if passed_count == total_count:
         print("\n🎉 All tests passed! The semantic search ranking is working correctly.")
     else:
         print("\n⚠️  Some tests failed. Review the scoring logic.")
-    
+
     return passed_count == total_count
 
 

@@ -2,15 +2,15 @@
 Unit tests for seed_manager.py — verify reproducibility.
 """
 
-import sys
 import os
 import random
-import pytest
+import sys
+
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.seed_manager import set_seed, reproducible_context
+from services.seed_manager import reproducible_context, set_seed
 
 
 class TestSetSeed:
@@ -39,7 +39,7 @@ class TestSetSeed:
 class TestReproducibleContext:
     def test_context_restores_state(self):
         set_seed(1)
-        before = random.random()
+        _ = random.random()  # establish baseline
 
         set_seed(1)
         _ = random.random()  # consume one value

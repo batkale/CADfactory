@@ -1,15 +1,16 @@
 import asyncio
-import sys
 import os
+import sys
 
 # Add root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from services.pipeline import run_precision_pipeline
 
+
 async def test_generalization():
     print("--- TESTING GENERALIZED MECHANICAL DNA ---")
-    
+
     prompts = [
         "industrial cooling fan with 7 blades",
         "protective case for a raspberry pi",
@@ -17,7 +18,7 @@ async def test_generalization():
         "fidget spinner with 3 arms",
         "stylish soap dispenser with pump neck"
     ]
-    
+
     for prompt in prompts:
         print(f"\n[TESTING] '{prompt}'")
         try:
@@ -25,7 +26,7 @@ async def test_generalization():
             if not res.success:
                 print(f"FAILED: {res.error}")
                 continue
-            
+
             # Print Layer 1.5 Match
             match_report = next((r for r in res.layer_reports if r.layer == 1.5), None)
             if match_report:
@@ -34,7 +35,7 @@ async def test_generalization():
                 print("L1.5 Match: NOT FOUND (possibly fell back to legacy)")
                 if res.layer_reports:
                     print(f"First report: {res.layer_reports[0].name} - {res.layer_reports[0].notes}")
-            
+
             # Print Decomposer result (Layer 4)
             decomp_report = next((r for r in res.layer_reports if r.name == "Semantic Decomposition"), None)
             if decomp_report:

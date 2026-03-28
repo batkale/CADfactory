@@ -19,20 +19,19 @@ Location: cadfactory-backend/services/param_sorter.py
 
 from __future__ import annotations
 
-import re
-import math
 import logging
-from typing import Dict, List, Optional, Any, Tuple
+import math
+import re
+from typing import Any, Dict, List, Optional, Tuple
+
 from pydantic import BaseModel, Field
 
-from services.nlp_extractor import ContextBundle
 from services.engineering_math import (
-    pareto_critical_features,
-    cylinder_volume,
-    fill_height_cylinder,
-    lookup_reference_dims,
     PHI,
+    lookup_reference_dims,
+    pareto_critical_features,
 )
+from services.nlp_extractor import ContextBundle
 
 logger = logging.getLogger(__name__)
 

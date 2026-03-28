@@ -6,23 +6,22 @@ Endpoints:
     GET  /api/topology/files/{fn} — serve the optimised STL
 """
 
+import asyncio
+import json as _json
+import logging
 import os
 import uuid
-import asyncio
-import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-import json as _json
 
 import security as auth_utils
-get_current_user = auth_utils.get_current_user
-
-from services import storage as storage_service
-from services.cadquery_runner import OUTPUT_DIR   # reuse same output dir
+from services.cadquery_runner import OUTPUT_DIR  # reuse same output dir
 from services.claude_cad import suggest_load_cases
+
+get_current_user = auth_utils.get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +127,8 @@ async def optimize_stream(req: OptimizeRequest, user=Depends(get_current_user)):
       progress  — {"stage": str, "label": str, "pct": int}
       result    — OptimizeResponse JSON or {"error": str}
     """
-    from database import SessionLocal
     import models
+    from database import SessionLocal
 
     # Resolve file path from DB
     db = SessionLocal()
@@ -203,8 +202,8 @@ async def optimize_sync(req: OptimizeRequest, user=Depends(get_current_user)):
     Blocking topology optimization endpoint (simpler alternative to /stream).
     May time out for high-resolution grids — prefer /optimize/stream.
     """
-    from database import SessionLocal
     import models
+    from database import SessionLocal
 
     db = SessionLocal()
     try:

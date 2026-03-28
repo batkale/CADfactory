@@ -5,20 +5,20 @@ and parsing BOM information from generated CadQuery scripts.
 Location: cadfactory-backend/services/script_utils.py
 """
 
-import re
 import json
+import re
 from typing import Optional
 
 
 def extract_python_code(response_text: str) -> str:
     """
     Extract Python code from Claude's response.
-    
+
     Handles three formats:
     1. Raw Python code (no markdown)
     2. ```python ... ``` blocks
     3. ``` ... ``` blocks
-    
+
     Returns clean Python code string.
     """
     # Try to extract from ```python ... ``` block first
@@ -26,17 +26,17 @@ def extract_python_code(response_text: str) -> str:
     match = re.search(pattern, response_text, re.DOTALL)
     if match:
         return match.group(1).strip()
-    
+
     # Try generic ``` ... ``` block
     pattern = r"```\s*\n(.*?)```"
     match = re.search(pattern, response_text, re.DOTALL)
     if match:
         return match.group(1).strip()
-    
+
     # Assume the entire response is code (we asked for no markdown)
     # Strip any leading/trailing whitespace and potential markdown artifacts
     code = response_text.strip()
-    
+
     # Remove any leading "Here is..." or similar preamble
     lines = code.split("\n")
     start_idx = 0
@@ -45,26 +45,26 @@ def extract_python_code(response_text: str) -> str:
         if stripped.startswith("import ") or stripped.startswith("from ") or stripped.startswith("#"):
             start_idx = i
             break
-    
+
     return "\n".join(lines[start_idx:]).strip()
 
 
 def validate_script(script: str) -> tuple[bool, list[str]]:
     """
     Basic validation of a CadQuery script before execution.
-    
+
     Returns (is_valid, list_of_warnings).
     """
     warnings = []
-    
+
     # Must contain cadquery import
     if "import cadquery" not in script and "from cadquery" not in script:
         warnings.append("Missing cadquery import — will be injected automatically")
-    
+
     # Must define 'result' variable
     if "result" not in script:
         warnings.append("No 'result' variable found — script may not export correctly")
-    
+
     # Check for dangerous imports/operations
     dangerous_patterns = [
         (r"\bos\.system\b", "os.system call detected"),
@@ -142,17 +142,17 @@ def validate_script(script: str) -> tuple[bool, list[str]]:
 def extract_bom_from_script(script: str) -> list[dict]:
     """
     Parse a CadQuery script to extract BOM-relevant information.
-    
+
     Looks for:
     - Parameter comments indicating part names/descriptions
     - Dimensions that imply material volume
     - Bolt hole sizes that imply fastener requirements
     """
     bom_items = []
-    
+
     # Extract the main part (always item 1)
     part_name = "Generated Part"
-    
+
     # Try to find a descriptive comment at the top
     lines = script.split("\n")
     for line in lines[:10]:
@@ -163,7 +163,7 @@ def extract_bom_from_script(script: str) -> list[dict]:
             if candidate.lower() not in ["imports", "parameters", "cadquery script"]:
                 part_name = candidate
                 break
-    
+
     bom_items.append({
         "name": part_name,
         "qty": 1,
@@ -171,7 +171,7 @@ def extract_bom_from_script(script: str) -> list[dict]:
         "manufacturing_method": None,  # Set by user's selection
         "notes": "AI-generated part"
     })
-    
+
     # Detect fasteners from hole patterns
     bolt_patterns = {
         r"\.hole\s*\(\s*3\.2": ("M3 Bolt", "M3"),
@@ -184,14 +184,14 @@ def extract_bom_from_script(script: str) -> list[dict]:
         r"\.cboreHole\s*\(\s*4\.2": ("M4 Socket Head Cap Screw", "M4"),
         r"\.cboreHole\s*\(\s*5\.2": ("M5 Socket Head Cap Screw", "M5"),
     }
-    
+
     fastener_counts = {}
     for pattern, (name, size) in bolt_patterns.items():
         matches = re.findall(pattern, script)
         if matches:
             key = name
             fastener_counts[key] = fastener_counts.get(key, 0) + len(matches)
-    
+
     for name, qty in fastener_counts.items():
         bom_items.append({
             "name": name,
@@ -200,13 +200,13 @@ def extract_bom_from_script(script: str) -> list[dict]:
             "manufacturing_method": "Off-the-Shelf",
             "notes": "Detected from hole pattern"
         })
-    
+
     # Detect heat-set inserts
     insert_patterns = {
         r"\.hole\s*\(\s*4\.0": ("M3 Heat-Set Insert", 0.15),
         r"\.hole\s*\(\s*5\.2[^,]*": ("M4 Heat-Set Insert", 0.20),
     }
-    
+
     for pattern, (name, cost) in insert_patterns.items():
         matches = re.findall(pattern, script)
         if matches:
@@ -217,7 +217,7 @@ def extract_bom_from_script(script: str) -> list[dict]:
                 "manufacturing_method": "Off-the-Shelf",
                 "notes": "Detected from insert hole size"
             })
-    
+
     return bom_items
 
 
@@ -243,7 +243,7 @@ def parse_json_response(response_text: str) -> Optional[dict]:
     Handles markdown-wrapped JSON and common formatting issues.
     """
     text = response_text.strip()
-    
+
     # Remove markdown code blocks if present
     if text.startswith("```json"):
         text = text[7:]
@@ -251,9 +251,9 @@ def parse_json_response(response_text: str) -> Optional[dict]:
         text = text[3:]
     if text.endswith("```"):
         text = text[:-3]
-    
+
     text = text.strip()
-    
+
     try:
         return json.loads(text)
     except json.JSONDecodeError:

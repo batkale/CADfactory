@@ -27,8 +27,8 @@ Implements:
 
 from __future__ import annotations
 
-import math
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -71,7 +71,7 @@ BEARING_STANDARDS: dict[str, dict[str, float]] = {
 def bearing_seat_dim(bearing_name: str = "608", fit_type: str = "press") -> dict[str, float]:
     """
     Return the required bore dimensions for a standard bearing seat.
-    
+
     fit_type:
       - "press": H7 fit (−0.02mm interference)
       - "slip":  G7 fit (+0.03mm clearance)
@@ -79,14 +79,14 @@ def bearing_seat_dim(bearing_name: str = "608", fit_type: str = "press") -> dict
     """
     std = BEARING_STANDARDS.get(bearing_name, BEARING_STANDARDS["608"])
     od = std["od"]
-    
+
     if fit_type == "press":
         bore_r = (od - 0.02) / 2.0
     elif fit_type == "slip":
         bore_r = (od + 0.03) / 2.0
     else:
         bore_r = (od + 0.10) / 2.0
-        
+
     return {
         "bore_radius_mm": round(float(bore_r), 3),  # type: ignore
         "bore_depth_mm":  float(std["w"]),
@@ -100,7 +100,7 @@ def calculate_stack_overlap_z(h_bottom: float, h_top: float, overlap: float = 2.
     """
     Returns the Z-center position for a part being stacked on top of another,
     assuming BOTH are centered at their local origin (CadQuery default).
-    
+
     Rule: pos_z = (h_bottom / 2.0) + (h_top / 2.0) - overlap
     """
     return (h_bottom / 2.0) + (h_top / 2.0) - overlap
@@ -219,14 +219,14 @@ def sphere_surface_area(radius_mm: float) -> float:
     return 4 * PI * radius_mm ** 2
 
 
-def box_volume(l: float, w: float, h: float) -> float:
+def box_volume(length: float, w: float, h: float) -> float:
     """V = l·w·h"""
-    return l * w * h
+    return length * w * h
 
 
-def box_surface_area(l: float, w: float, h: float) -> float:
+def box_surface_area(length: float, w: float, h: float) -> float:
     """SA = 2(lw + lh + wh)"""
-    return 2 * (l * w + l * h + w * h)
+    return 2 * (length * w + length * h + w * h)
 
 
 def cone_volume(r_base: float, r_top: float, height: float) -> float:
@@ -580,68 +580,9 @@ def required_fin_area(power_W: float, max_delta_T_K: float = 20.0,
 # ║ 12. PARETO PRINCIPLE — FEATURE COMPLEXITY PRIORITISER                        ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
-def pareto_critical_features(features: list[dict]) -> dict:
-    """
-    Implements the 80/20 Rule for design features.
-
-    Input: list of {name, visual_weight} dicts.
-    Returns: top 20% of features that contribute ~80% of visual mass.
-
-    Use to identify which CSG operations are the 'identity' of the object.
-    This guides the AI to spend precision budget on the most impactful features.
-    """
-    if not features:
-        return {"critical": [], "supporting": [], "pareto_threshold": 0}
-
-    total_weight = sum(f.get("visual_weight", 1) for f in features)
-    sorted_features = sorted(features, key=lambda x: x.get("visual_weight", 1), reverse=True)
-
-    cumulative = 0.0
-    critical, supporting = [], []
-    for feat in sorted_features:
-        cumulative += feat.get("visual_weight", 1) / total_weight
-        if cumulative <= 0.80:
-            critical.append(feat)
-        else:
-            supporting.append(feat)
-
-    return {
-        "critical": critical,
-        "supporting": supporting,
-        "pareto_threshold": len(critical),
-    }
-
-
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║ 13. GD&T TOLERANCE ENGINE (ISO 286)                                          ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
-
-def iso_tolerance_microns(nominal_mm: float, grade: int = 7) -> float:
-    """
-    ISO 286 tolerance grade (IT grade) in microns.
-    Approximate formula: IT = 10^((grade-1)*0.1) × geometric_mean_microns
-
-    Grades:  IT1=precision, IT7=general engineering, IT14=rough.
-    Returns tolerance band in microns.
-    """
-    # ISO 286 standard table (simplified geometric interpolation)
-    if nominal_mm <= 3:       D = math.sqrt(1 * 3)
-    elif nominal_mm <= 6:     D = math.sqrt(3 * 6)
-    elif nominal_mm <= 10:    D = math.sqrt(6 * 10)
-    elif nominal_mm <= 18:    D = math.sqrt(10 * 18)
-    elif nominal_mm <= 30:    D = math.sqrt(18 * 30)
-    elif nominal_mm <= 50:    D = math.sqrt(30 * 50)
-    elif nominal_mm <= 80:    D = math.sqrt(50 * 80)
-    elif nominal_mm <= 120:   D = math.sqrt(80 * 120)
-    else:                     D = math.sqrt(120 * 180)
-
-    # Tolerance unit i (microns) = 0.45·D^(1/3) + 0.001·D
-    i = 0.45 * (D ** (1/3)) + 0.001 * D
-    # IT grade multiplier (IT5=7i, IT6=10i, IT7=16i, IT8=25i, IT9=40i, IT10=64i)
-    multipliers = {1:1, 2:1.6, 3:2.5, 4:4, 5:7, 6:10, 7:16, 8:25, 9:40, 10:64, 11:100, 12:160, 13:250, 14:400}
-    mult = multipliers.get(grade, 16)
-    return i * mult
-
 
 def fit_class(hole_dia_mm: float, shaft_dia_mm: float) -> dict:
     """
@@ -661,44 +602,6 @@ def fit_class(hole_dia_mm: float, shaft_dia_mm: float) -> dict:
         "clearance_mm": round(float(diff), 4),  # type: ignore
         "tolerance_band_mm": round(float(2 * tol), 4),  # type: ignore
     }
-
-
-# ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║ 14. WALL THICKNESS VALIDATOR                                                 ║
-# ╚══════════════════════════════════════════════════════════════════════════════╝
-
-def wall_thickness_check(
-    wall_mm: float, process: str = "FDM",
-    height_mm: float = 0.0
-) -> dict:
-    """
-    Validate wall thickness against manufacturing process minimums.
-    Also applies Euler slenderness check for tall thin walls.
-    """
-    min_t = MIN_WALL_THICKNESS.get(process, 1.5)
-    ok = wall_mm >= min_t
-
-    result = {
-        "compliant": ok,
-        "wall_mm": round(float(wall_mm), 3),  # type: ignore
-        "minimum_mm": min_t,
-        "process": process,
-        "recommendation": None,
-    }
-
-    if not ok:
-        result["recommendation"] = (
-            f"Increase wall to ≥{min_t}mm for {process} manufacturing."
-        )
-    elif height_mm > 0:
-        # Slenderness check: h/t > 10 is a thin-wall situation
-        sr = height_mm / wall_mm
-        if sr > 20:
-            result["recommendation"] = (
-                f"Slenderness ratio h/t = {sr:.1f} > 20 — consider ribbing or increasing wall."
-            )
-
-    return result
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -798,15 +701,6 @@ def mohrs_circle(sigma_x: float, sigma_y: float, tau_xy: float) -> dict:
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║ 20. FLUID VOLUME / FILL-LEVEL GEOMETRY                                       ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
-
-def fill_height_cylinder(target_volume_ml: float, inner_radius_mm: float) -> float:
-    """
-    Given a target fluid volume (ml = cm³), compute fill height in mm
-    for a cylindrical container. h = V(mm³) / (π·r²).
-    """
-    V_mm3 = target_volume_ml * 1000.0
-    return V_mm3 / max(circle_area(inner_radius_mm), 1e-9)
-
 
 def pyramid_volume(base_l: float, base_w: float, height: float) -> float:
     """V = (1/3)·base_area·h — trapezoidal hopper or pyramid features."""
@@ -1093,7 +987,7 @@ def part_mass_estimate(volume_mm3: float, material_or_density: str | float = "AB
             "HDPE": 0.95, "Al6061": 2.70, "Steel304": 7.93,
         }
         density_g_cm3 = float(DENSITIES.get(material_or_density, 1.04))
-    
+
     density_g_mm3 = density_g_cm3 / 1000.0
     return volume_mm3 * density_g_mm3
 

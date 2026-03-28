@@ -8,13 +8,13 @@ Inspired by GenCAD's multi-view rendering — but parallelized across
 views for better performance.
 """
 
+import logging
+import math
 import os
 import struct
-import math
-import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import Optional
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 

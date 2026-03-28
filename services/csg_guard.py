@@ -23,15 +23,18 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
 from pydantic import BaseModel, Field
 
-from services.semantic_decomposer import CSGOperation, DecomposedObject
 from services.engineering_math import (
-    cylinder_volume, sphere_volume, cone_volume,
-    box_volume, torus_volume,
-    MIN_WALL_THICKNESS,
+    box_volume,
+    cone_volume,
+    cylinder_volume,
+    sphere_volume,
+    torus_volume,
 )
+from services.semantic_decomposer import CSGOperation
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +87,10 @@ def _estimate_volume(op: CSGOperation) -> float:
         elif s == "torus":
             return torus_volume(float(p.get("major_r", 20)), float(p.get("minor_r", 5)))
         elif s in ("box", "rounded_box"):
-            l = float(p.get("length", 20)); w = float(p.get("width", 20))
+            length = float(p.get("length", 20))
+            w = float(p.get("width", 20))
             h = float(p.get("height", 10))
-            return box_volume(l, w, h)
+            return box_volume(length, w, h)
         elif s == "polygon_prism":
             sides = int(p.get("sides", 6))
             d = float(p.get("diameter", 20))
@@ -259,7 +263,8 @@ If no issues, return: {"issues_found": [], "overall_assessment": "safe_to_procee
 def _ai_guard_review(ops: List[CSGOperation]) -> Dict[str, Any]:
     """Run an AI review pass on the CSG operation list."""
     import json
-    from services.claude_cad import _generate_content, MODEL_FLASH
+
+    from services.claude_cad import MODEL_FLASH, _generate_content
     from services.script_utils import parse_json_response
 
     ops_summary = json.dumps(

@@ -16,47 +16,65 @@ Endpoints:
     GET  /api/generate/files/{filename}  — Serve generated STL/STEP files
 """
 
-import os
 import asyncio
 import json as _json
 import logging
-from typing import Optional, List
+import os
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
-
-import security as auth_utils
-get_current_user = auth_utils.get_current_user
-
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-limiter = Limiter(key_func=get_remote_address)
+from sqlalchemy.orm import Session
 
+import models
+import security as auth_utils
 from config.prompts import (
-    DESIGN_PLAN_PROMPT, DESIGN_PLAN_TO_CODE_TEMPLATE,
-    RETRY_PROMPT_TEMPLATE, build_system_prompt, build_system_prompt_with_examples,
-    STEP_IMPORT_SYSTEM_PROMPT, REFINE_SYSTEM_PROMPT,
-    SHAPE_RESEARCH_PROMPT_TO_PLAN, SHAPE_RESEARCH_INJECTION,
+    DESIGN_PLAN_PROMPT,
+    DESIGN_PLAN_TO_CODE_TEMPLATE,
+    REFINE_SYSTEM_PROMPT,
+    RETRY_PROMPT_TEMPLATE,
+    SHAPE_RESEARCH_INJECTION,
+    SHAPE_RESEARCH_PROMPT_TO_PLAN,
+    STEP_IMPORT_SYSTEM_PROMPT,
+    build_system_prompt,
+    build_system_prompt_with_examples,
+)
+from database import SessionLocal, get_db
+from services.cadquery_runner import (
+    EXECUTION_TIMEOUT,
+    OUTPUT_DIR,
+    execute_cadquery_sandboxed,
+    get_file_url,
 )
 from services.claude_cad import (
-    generate_and_execute, refine_script, suggest_load_cases,
-    _generate_content, MODEL_FLASH, MODEL_PRO, check_complexity, MAX_RETRIES,
-    generate_with_tuned_model, research_shape,
+    MAX_RETRIES,
+    MODEL_FLASH,
+    MODEL_PRO,
+    _generate_content,
+    check_complexity,
+    generate_and_execute,
+    generate_with_tuned_model,
+    refine_script,
+    research_shape,
+    suggest_load_cases,
 )
-from services.semantic_decomposer import decompose_prompt, DecomposedObject
 from services.csg_builder import build_from_prompt_result
-from services.templates import TEMPLATE_MAP
-from services.rag_store import get_similar_examples, store_count
-from services.cadquery_runner import get_file_url, OUTPUT_DIR, execute_cadquery_sandboxed, EXECUTION_TIMEOUT
-from services.script_utils import (
-    validate_script, extract_bom_from_script,
-    parse_json_response, extract_python_code,
-)
 from services.fine_tuner import get_active_tuned_model
-from database import get_db, SessionLocal
-import models
+from services.rag_store import get_similar_examples
+from services.script_utils import (
+    extract_bom_from_script,
+    extract_python_code,
+    parse_json_response,
+    validate_script,
+)
+from services.semantic_decomposer import decompose_prompt
+from services.templates import TEMPLATE_MAP
+
+get_current_user = auth_utils.get_current_user
+limiter = Limiter(key_func=get_remote_address)
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +360,6 @@ async def generate_part_precision(
 
     Response includes `pipeline_report` with per-layer timing and confidence scores.
     """
-    import time as _time
     from services.pipeline import run_precision_pipeline
 
     logger.info(
@@ -371,7 +388,7 @@ async def generate_part_precision(
 
     # Execute the generated script
     from services.cadquery_runner import execute_cadquery_sandboxed
-    from services.script_utils import validate_script, extract_bom_from_script
+    from services.script_utils import extract_bom_from_script, validate_script
 
     is_valid, val_warnings = validate_script(final_script)
     if not is_valid:
@@ -551,7 +568,7 @@ async def generate_stream(request: Request, req: GenerateRequest, user=Depends(g
         if decomposed.template_name in TEMPLATE_MAP:
             from services.templates import validate_template_params
             template_errors = validate_template_params(decomposed.template_name, decomposed.template_params)
-            
+
             if not template_errors:
                 try:
                     template_fn = TEMPLATE_MAP[decomposed.template_name]
@@ -664,9 +681,9 @@ async def generate_stream(request: Request, req: GenerateRequest, user=Depends(g
                         "dims_estimated": decomposed.dims_are_estimated,
                     })
                     return
-                logger.info(f"Tuned model script failed execution — falling back to base AI pipeline")
+                logger.info("Tuned model script failed execution — falling back to base AI pipeline")
             else:
-                logger.info(f"Tuned model generation failed — falling back to base AI pipeline")
+                logger.info("Tuned model generation failed — falling back to base AI pipeline")
 
         # ── Stage 1.9: Shape Research — AI describes the standard form ─────────
         yield sse("progress", {"stage": "planning",
@@ -1492,7 +1509,6 @@ async def generate_from_image(
 
     Flow: Image → Gemini Vision → Text Description → (user reviews) → Generate
     """
-    from fastapi import UploadFile, File as FastAPIFile
     from services.image_to_cad import image_to_cad_description
 
     if file is None:

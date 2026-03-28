@@ -1,4 +1,6 @@
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 """
@@ -7,12 +9,12 @@ Geometry parsing service.
 - STEP → bounding box × fill factor, B-Rep face count, rich assembly BOM
 """
 
-import struct
-import re
-import math
-from typing import Optional
-from dataclasses import dataclass, field
-from collections import Counter
+import math  # noqa: E402
+import re  # noqa: E402
+import struct  # noqa: E402
+from collections import Counter  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
+from typing import Optional  # noqa: E402
 
 
 @dataclass
@@ -99,8 +101,7 @@ class GeometryResult:
 # ── Assembly BOM Cache ───────────────────────────────────────────────────────
 # Caches parsed BOM data by file content hash to avoid re-parsing
 # the same STEP assembly multiple times.
-import hashlib
-from functools import lru_cache
+import hashlib  # noqa: E402
 
 _bom_cache: dict[str, list] = {}
 
@@ -320,10 +321,14 @@ def _infer_shaft_cost(name: str) -> float:
     """AliExpress shaft cost from diameter hint."""
     dnum = re.search(r'(\d+)\s*mm', name)
     d = int(dnum.group(1)) if dnum else 6
-    if d <= 4: return 0.80
-    if d <= 6: return 1.20
-    if d <= 8: return 1.80
-    if d <= 10: return 2.50
+    if d <= 4:
+        return 0.80
+    if d <= 6:
+        return 1.20
+    if d <= 8:
+        return 1.80
+    if d <= 10:
+        return 2.50
     return round(d * 0.30, 2)
 
 
@@ -492,9 +497,9 @@ def _compute_stl_metrics(triangles: list) -> tuple:
         bx, by, bz = v3[0]-v1[0], v3[1]-v1[1], v3[2]-v1[2]
         sa += 0.5 * math.sqrt((ay*bz - az*by)**2 + (az*bx - ax*bz)**2 + (ax*by - ay*bx)**2)
         for v in (v1, v2, v3):
-            min_x = min(min_x, v[0]); max_x = max(max_x, v[0])
-            min_y = min(min_y, v[1]); max_y = max(max_y, v[1])
-            min_z = min(min_z, v[2]); max_z = max(max_z, v[2])
+            min_x = min(min_x, v[0]); max_x = max(max_x, v[0])  # noqa: E702
+            min_y = min(min_y, v[1]); max_y = max(max_y, v[1])  # noqa: E702
+            min_z = min(min_z, v[2]); max_z = max(max_z, v[2])  # noqa: E702
 
     volume_cm3 = abs(vol) / 1000.0
     sa_cm2 = sa / 100.0
@@ -553,9 +558,9 @@ def parse_step(data: bytes) -> GeometryResult:
     pt_count = 0
     for m in pt_pattern.finditer(text):
         x, y, z = float(m.group(1))*to_mm, float(m.group(2))*to_mm, float(m.group(3))*to_mm
-        min_x = min(min_x, x); max_x = max(max_x, x)
-        min_y = min(min_y, y); max_y = max(max_y, y)
-        min_z = min(min_z, z); max_z = max(max_z, z)
+        min_x = min(min_x, x); max_x = max(max_x, x)  # noqa: E702
+        min_y = min(min_y, y); max_y = max(max_y, y)  # noqa: E702
+        min_z = min(min_z, z); max_z = max(max_z, z)  # noqa: E702
         pt_count += 1
 
     if pt_count == 0:
@@ -630,15 +635,9 @@ def parse_3mf(data: bytes) -> GeometryResult:
     Parse a 3MF file (ZIP-based XML).
     3MF contains: exact mesh triangles, units, materials, part names.
     """
-    import zipfile
     import xml.etree.ElementTree as ET
+    import zipfile
     from io import BytesIO
-
-    NS = {
-        '3mf': 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02',
-        'mat': 'http://schemas.microsoft.com/3dmanufacturing/material/2015/02',
-        'm':   'http://schemas.microsoft.com/3dmanufacturing/core/2015/02',
-    }
 
     try:
         zf = zipfile.ZipFile(BytesIO(data))

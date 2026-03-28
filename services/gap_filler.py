@@ -22,12 +22,13 @@ Location: cadfactory-backend/services/gap_filler.py
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
+from services.constraint_validator import ValidationResult
 from services.nlp_extractor import ContextBundle
 from services.param_sorter import SortedParams
-from services.constraint_validator import ValidationResult
 from services.semantic_decomposer import CSGOperation
 
 logger = logging.getLogger(__name__)
@@ -186,7 +187,7 @@ def fill_gaps(
     Merges all upstream layer outputs into a unified RefinedSpec.
     Uses Flash for the gap-fill inference. Falls back to engineering defaults.
     """
-    from services.claude_cad import _generate_content, MODEL_FLASH
+    from services.claude_cad import MODEL_FLASH, _generate_content
     from services.script_utils import parse_json_response
 
     corrected = validated.auto_corrected_params or {}

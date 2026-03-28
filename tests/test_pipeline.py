@@ -7,15 +7,15 @@ Run from project root:
     ./venv/bin/python tests/test_pipeline.py
 """
 
-import sys
 import os
+import sys
 import time
 
 # Add project root to path so imports resolve
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.semantic_decomposer import decompose_prompt
 from services.csg_builder import build_from_prompt_result, validate_csg_tree
+from services.semantic_decomposer import decompose_prompt
 
 # ── Test prompts ───────────────────────────────────────────────────────────────
 
@@ -95,7 +95,7 @@ def print_result(r: dict):
             tag = "WARN " if e.startswith("WARNING:") else "ERROR"
             print(f"     validation [{tag}]: {e}")
     else:
-        print(f"     validation_errors: (none)")
+        print("     validation_errors: (none)")
 
     status = "✓ OK" if r["build_success"] else "✗ FAIL"
     print(f"     build_success   : {status}")
@@ -156,7 +156,7 @@ def main():
         pattern, count = most_common_error
         print(f"  En sık validation hatası ({count}x): {pattern}…")
     else:
-        print(f"  En sık validation hatası : (yok)")
+        print("  En sık validation hatası : (yok)")
 
     print(f"  Toplam süre           : {total_elapsed:.1f}s")
 

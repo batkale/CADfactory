@@ -16,7 +16,8 @@ Location: cadfactory-backend/services/nlp_extractor.py
 from __future__ import annotations
 
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -129,7 +130,7 @@ def extract_context(prompt: str) -> ContextBundle:
     Uses Gemini Flash for speed. Always returns a ContextBundle — never raises.
     Falls back to a minimal bundle on API failure.
     """
-    from services.claude_cad import _generate_content, MODEL_FLASH
+    from services.claude_cad import MODEL_FLASH, _generate_content
     from services.script_utils import parse_json_response
 
     data = None
