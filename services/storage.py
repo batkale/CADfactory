@@ -1,4 +1,6 @@
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 """
@@ -6,11 +8,12 @@ File storage service — saves uploaded CAD files to local disk.
 Easily swappable for S3 / GCS in production.
 """
 
-import os
-import uuid
-import aiofiles
-from pathlib import Path
-from dotenv import load_dotenv
+import os  # noqa: E402
+import uuid  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import aiofiles  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 

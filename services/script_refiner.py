@@ -19,8 +19,8 @@ Location: cadfactory-backend/services/script_refiner.py
 from __future__ import annotations
 
 import logging
-from typing import Optional, Tuple
 from dataclasses import dataclass
+from typing import Optional
 
 from services.csg_guard import GuardedPlan
 
@@ -153,7 +153,7 @@ async def refine_script_layer8(
     Returns RefinedScript with the densified, fully parametric script.
     Falls back to returning the original script if AI overhaul fails.
     """
-    from services.claude_cad import _generate_content, MODEL_PRO, MODEL_FLASH
+    from services.claude_cad import MODEL_FLASH, MODEL_PRO, _generate_content
     from services.script_utils import extract_python_code, validate_script
 
     original_lines = script.count("\n") + 1

@@ -15,20 +15,19 @@ Performance notes:
   - Seed management via services.seed_manager for reproducible results
 """
 
+import logging
+import math
 import os
 import struct
-import math
-import logging
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from itertools import product as iproduct
-from typing import Optional
 
 import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 from scipy.sparse.linalg import spsolve
 
-from services.seed_manager import set_seed, get_seed_from_env
+from services.seed_manager import get_seed_from_env, set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +59,6 @@ def _load_3mf_triangles(path: str) -> np.ndarray:
         for model_name in model_names:
             xml_data = zf.read(model_name)
             root = ET.fromstring(xml_data)
-            ns = {"m": _3MF_NS}
             for mesh in root.iter(f"{{{_3MF_NS}}}mesh"):
                 verts_el = mesh.find(f"{{{_3MF_NS}}}vertices")
                 tris_el  = mesh.find(f"{{{_3MF_NS}}}triangles")
@@ -323,9 +321,9 @@ def _unit_ke(nu: float = 0.3) -> np.ndarray:
             B[0, 3*i]   = dN_dx[0, i]
             B[1, 3*i+1] = dN_dx[1, i]
             B[2, 3*i+2] = dN_dx[2, i]
-            B[3, 3*i]   = dN_dx[1, i];  B[3, 3*i+1] = dN_dx[0, i]
-            B[4, 3*i+1] = dN_dx[2, i];  B[4, 3*i+2] = dN_dx[1, i]
-            B[5, 3*i]   = dN_dx[2, i];  B[5, 3*i+2] = dN_dx[0, i]
+            B[3, 3*i]   = dN_dx[1, i]; B[3, 3*i+1] = dN_dx[0, i]  # noqa: E702
+            B[4, 3*i+1] = dN_dx[2, i]; B[4, 3*i+2] = dN_dx[1, i]  # noqa: E702
+            B[5, 3*i]   = dN_dx[2, i]; B[5, 3*i+2] = dN_dx[0, i]  # noqa: E702
 
         KE += B.T @ D @ B * detJ  # weight = 1 for 2-point Gauss
 
@@ -475,7 +473,9 @@ def run_simp(
 def _boundary_dofs(side: str, nx: int, ny: int, nz: int) -> np.ndarray:
     """Return global DOF indices for all nodes on the specified face."""
     dofs = []
-    nn = lambda ix, iy, iz: iz * (ny + 1) * (nx + 1) + iy * (nx + 1) + ix
+
+    def nn(ix, iy, iz):
+        return iz * (ny + 1) * (nx + 1) + iy * (nx + 1) + ix
 
     if side == "bottom":    # iz=0
         for ix in range(nx + 1):
@@ -517,7 +517,9 @@ def _load_vector(
 ) -> np.ndarray:
     """Apply distributed unit load on the specified face in the given direction."""
     F = np.zeros(ndof)
-    nn = lambda ix, iy, iz: iz * (ny + 1) * (nx + 1) + iy * (nx + 1) + ix
+
+    def nn(ix, iy, iz):
+        return iz * (ny + 1) * (nx + 1) + iy * (nx + 1) + ix
 
     nodes = []
     if side == "top":
@@ -639,7 +641,9 @@ def extract_surface(
                 if not solid[ex, ey, ez]:
                     continue
                 for (dx,dy,dz), corners, flip in neighbours:
-                    nx_ = ex+dx; ny_ = ey+dy; nz_ = ez+dz
+                    nx_ = ex+dx
+                    ny_ = ey+dy
+                    nz_ = ez+dz
                     # Expose face if neighbour is empty or out of bounds
                     if (0 <= nx_ < nx and 0 <= ny_ < ny and 0 <= nz_ < nz
                             and solid[nx_, ny_, nz_]):

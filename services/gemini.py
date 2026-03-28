@@ -1,4 +1,6 @@
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 """
@@ -6,12 +8,13 @@ Gemini AI analysis service.
 API key is stored server-side in .env — never exposed to the client.
 """
 
-import os
-import json
-import httpx
-from typing import Optional
-from dotenv import load_dotenv
-from services.geometry import GeometryResult
+import json  # noqa: E402
+import os  # noqa: E402
+
+import httpx  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
+
+from services.geometry import GeometryResult  # noqa: E402
 
 load_dotenv()
 
@@ -248,41 +251,6 @@ Use the EXACT part names from the list as JSON keys. If a price is not found, om
 
     return {}
 
-
-    """
-    Returns (analysis_dict, ai_was_used).
-    Falls back to rule-based if Gemini key missing or call fails.
-    """
-    if not GEMINI_API_KEY:
-        return _fallback_analysis(geom), False
-
-    nearshore = cogs_data.get("regions", {}).get("nearshore", {})
-    nearshore_100u = nearshore.get("tiers", {}).get("100", {}).get("total", "N/A")
-
-    prompt = _build_prompt(geom, {"nearshore_100u": nearshore_100u})
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                GEMINI_URL,
-                params={"key": GEMINI_API_KEY},
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1024},
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-
-        raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
-        # Strip markdown fences if present
-        clean = raw_text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        result = json.loads(clean)
-        return result, True
-
-    except Exception as e:
-        print(f"[Gemini] Failed: {e} — using fallback")
-        return _fallback_analysis(geom), False
 
 def _extract_fields_manually(text: str) -> dict:
     """Last-resort: pull individual fields from Gemini output using regex."""

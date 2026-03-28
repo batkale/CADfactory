@@ -9,12 +9,12 @@ Inspired by GenCAD's image-conditioned CAD generation approach, but
 leveraging the existing Gemini API integration and text-to-CAD pipeline.
 """
 
-import os
 import base64
 import logging
 import mimetypes
-from typing import Optional
+import os
 from dataclasses import dataclass, field
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -132,8 +132,9 @@ async def analyze_image_for_cad(
     Returns:
         ImageAnalysisResult with description and optional metadata.
     """
-    import httpx
     import json
+
+    import httpx
 
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY not configured. Set it in .env")

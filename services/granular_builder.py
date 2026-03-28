@@ -20,19 +20,24 @@ Location: cadfactory-backend/services/granular_builder.py
 
 from __future__ import annotations
 
-import math
 import logging
-from typing import List, Dict, Optional, Tuple, Any
+import math
+from typing import Dict, List, Optional, Tuple
 
-from services.semantic_decomposer import CSGOperation, DecomposedObject
 from services.csg_guard import GuardedPlan
-from services.gap_filler import RefinedSpec
 from services.engineering_math import (
-    draft_taper_radius, g2_fillet_radius, cylinder_volume,
-    cone_volume, box_volume, sphere_volume, part_mass_estimate,
-    iso_tolerance_microns, ISO_CLEARANCE_HOLES,
-    MIN_WALL_THICKNESS, PHI,
+    ISO_CLEARANCE_HOLES,
+    MIN_WALL_THICKNESS,
+    box_volume,
+    cone_volume,
+    cylinder_volume,
+    draft_taper_radius,
+    iso_tolerance_microns,
+    part_mass_estimate,
+    sphere_volume,
 )
+from services.gap_filler import RefinedSpec
+from services.semantic_decomposer import CSGOperation
 
 logger = logging.getLogger(__name__)
 
@@ -76,18 +81,20 @@ def _vol_comment(shape: str, params: dict, label: str) -> str:
             comments.append(f"V=π×{r:.1f}²×{h:.1f}={v:.0f}mm³ | m≈{m:.1f}g")
             comments.append(f"SA_lat=2π×{r:.1f}×{h:.1f}={2*math.pi*r*h:.0f}mm²")
         elif s == "cone":
-            rb = float(params.get("r_base", 0)); rt = float(params.get("r_top", 0))
+            rb = float(params.get("r_base", 0))
+            rt = float(params.get("r_top", 0))
             h  = float(params.get("height", 0))
             v  = cone_volume(rb, rt, h)
             m  = part_mass_estimate(v)
             comments.append(f"cone frustum V={v:.0f}mm³ | draft r_top={rt:.2f}mm ✓")
             comments.append(f"m≈{m:.1f}g | draft_angle={math.degrees(math.atan((rb-rt)/h)):.2f}°")
         elif s in ("box", "rounded_box"):
-            l = float(params.get("length", 0)); w = float(params.get("width", 0))
+            length = float(params.get("length", 0))
+            w = float(params.get("width", 0))
             h = float(params.get("height", 0))
-            v = box_volume(l, w, h)
+            v = box_volume(length, w, h)
             m = part_mass_estimate(v)
-            comments.append(f"V={l:.1f}×{w:.1f}×{h:.1f}={v:.0f}mm³ | m≈{m:.1f}g")
+            comments.append(f"V={length:.1f}×{w:.1f}×{h:.1f}={v:.0f}mm³ | m≈{m:.1f}g")
         elif s == "sphere":
             r = float(params.get("radius", 0))
             v = sphere_volume(r)
@@ -219,14 +226,13 @@ def build_granular_script(
 ) -> str:
     """
     Layer 7: Generate a hyper-detailed, parametric CadQuery script.
-    
+
     This is 5–10× more verbose than the basic CSG builder output.
     Every feature is documented, every magic number is a named constant,
     and every operation has engineering validation comments.
     """
     draft_angle = spec.draft_angle_deg if spec else 1.5
     ext_fillet  = spec.fillet_r_external if spec else 2.0
-    int_fillet  = spec.fillet_r_internal if spec else 1.25
     priority_labels = set(spec.priority_order[:3] if spec else [])
     pareto_labels   = set(guarded.approved_ops[i].label for i in range(min(2, len(guarded.approved_ops))) if guarded) if guarded else set()
 
@@ -302,12 +308,13 @@ def build_granular_script(
 
                 # Pareto marker
                 if is_identity:
-                    lines.append(f"  # ★ IDENTITY FEATURE — receives full precision budget")
+                    lines.append("  # ★ IDENTITY FEATURE — receives full precision budget")
 
                 # ── Assert guards ─────────────────────────────────────────
                 p = op.params
                 if shape_lower in ("cylinder", "cone"):
-                    h_key = "height"; r_key = "radius" if "radius" in p else "r_base"
+                    h_key = "height"
+                    r_key = "radius" if "radius" in p else "r_base"
                     if h_key in p and r_key in p:
                         const_h = _const_name(label, h_key)
                         const_r = _const_name(label, r_key)
@@ -328,8 +335,10 @@ def build_granular_script(
                     lines.extend(_curve_prism_lines(var, op.params))
 
                 elif is_rounded:
-                    L = float(p.get("length", 20)); W = float(p.get("width", 20))
-                    H = float(p.get("height", 10)); R = float(p.get("fillet_r", 2.0))
+                    L = float(p.get("length", 20))
+                    W = float(p.get("width", 20))
+                    H = float(p.get("height", 10))
+                    R = float(p.get("fillet_r", 2.0))
                     lines.append(f"{var} = cq.Workplane('XY').box({L}, {W}, {H})")
                     lines.append(f"try: {var} = {var}.edges().fillet({R})")
                     lines.append(f"except Exception: pass  # fillet skipped on [{label}]")
@@ -401,7 +410,8 @@ def build_granular_script(
                     )
 
                 elif shape_lower == "torus":
-                    mr = float(p.get("major_r", 20)); nr = float(p.get("minor_r", 5))
+                    mr = float(p.get("major_r", 20))
+                    nr = float(p.get("minor_r", 5))
                     lines.append(
                         f"{var} = cq.Workplane('XZ').center({mr}, 0)"
                         f".circle({nr}).revolve()"
@@ -454,9 +464,12 @@ def build_granular_script(
                 # ── Rotations ─────────────────────────────────────────────
                 if op.rotation:
                     rx, ry, rz = (op.rotation + [0.0, 0.0, 0.0])[:3]
-                    if rx: lines.append(f"{var} = {var}.rotate((0,0,0), (1,0,0), {rx})")
-                    if ry: lines.append(f"{var} = {var}.rotate((0,0,0), (0,1,0), {ry})")
-                    if rz: lines.append(f"{var} = {var}.rotate((0,0,0), (0,0,1), {rz})")
+                    if rx:
+                        lines.append(f"{var} = {var}.rotate((0,0,0), (1,0,0), {rx})")
+                    if ry:
+                        lines.append(f"{var} = {var}.rotate((0,0,0), (0,1,0), {ry})")
+                    if rz:
+                        lines.append(f"{var} = {var}.rotate((0,0,0), (0,0,1), {rz})")
 
                 if copy_angle is not None and copy_angle != 0:
                     lines.append(f"{var} = {var}.rotate((0,0,0), (0,0,1), {copy_angle:.3f})")
@@ -476,7 +489,7 @@ def build_granular_script(
                         f"try: {var} = {var}.edges('|Z').fillet(FILLET_R_EXTERNAL)"
                         f"  # exterior edge fillet [{label}]"
                     )
-                    lines.append(f"except Exception: pass")
+                    lines.append("except Exception: pass")
 
                 lines.append("")
 
@@ -535,7 +548,6 @@ def build_granular_script(
 
     # ── Global finish pass ─────────────────────────────────────────────────
     ext_r = spec.fillet_r_external if spec else ext_fillet
-    int_r = spec.fillet_r_internal if spec else 0
 
     is_aesthetic = aesthetic_class in ("consumer", "decorative")
 
@@ -543,9 +555,9 @@ def build_granular_script(
         fillet_r = ext_r if ext_r > 0 else 2.0
         lines.append("# ─── Global finish: external edge softening ────────────────────────")
         lines.append(f"try: result = result.edges('|Z').fillet({fillet_r})")
-        lines.append(f"except Exception:")
+        lines.append("except Exception:")
         lines.append(f"    try: result = result.edges('|Z').chamfer({fillet_r * 0.5})")
-        lines.append(f"    except Exception: pass  # fillet+chamfer skipped")
+        lines.append("    except Exception: pass  # fillet+chamfer skipped")
 
         # Bottom chamfer for all parts
         lines.append(

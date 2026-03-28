@@ -1,14 +1,21 @@
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from sqlalchemy.orm import Session
 from typing import List
-from database import get_db
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
 import models
 import schemas
 import security as auth_utils
-from services import storage, geometry as geo_service, cogs as cogs_service, gemini as gemini_service
+from database import get_db
+from services import cogs as cogs_service
+from services import gemini as gemini_service
+from services import geometry as geo_service
+from services import storage
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
 

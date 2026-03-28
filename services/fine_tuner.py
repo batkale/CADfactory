@@ -15,9 +15,9 @@ Usage flow:
 
 from __future__ import annotations
 
-import os
 import logging
-from typing import Optional, List
+import os
+from typing import List, Optional
 
 from google import genai
 from google.genai import types as genai_types
@@ -157,9 +157,9 @@ def get_active_tuned_model(db: Session) -> Optional[str]:
     row = (
         db.query(models.TunedModel)
         .filter(
-            models.TunedModel.is_active == True,
+            models.TunedModel.is_active.is_(True),
             models.TunedModel.state.contains("SUCCEEDED"),
-            models.TunedModel.tuned_model_name != None,
+            models.TunedModel.tuned_model_name.isnot(None),
         )
         .first()
     )

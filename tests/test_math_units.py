@@ -6,71 +6,72 @@ Inspired by CadQuery's test suite discipline and GenCAD's lack thereof.
 """
 
 import math
-import sys
 import os
+import sys
+
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.engineering_math import (
+    aspect_ratio,
+    # Fastener
+    bearing_seat_dim,
+    # Fluid
+    bernoulli_velocity,
+    box_surface_area,
+    box_volume,
     # Geometric formulas
     circle_area,
+    circular_section_I,
     circumference,
-    cylinder_volume,
-    cylinder_surface_area,
-    sphere_volume,
-    sphere_surface_area,
-    box_volume,
-    box_surface_area,
     cone_volume,
-    torus_volume,
-    pythagorean_diagonal,
-    aspect_ratio,
-    hollow_shell_volume,
+    container_wall_thickness_pressure,
+    curvature_kappa,
+    cylinder_surface_area,
+    cylinder_volume,
+    draft_compliance,
+    draft_taper_radius,
+    drop_velocity,
+    # Buckling
+    euler_buckling_load,
+    fibonacci_sequence,
+    g2_check,
+    # G2 curvature
+    g2_fillet_radius,
+    get_hole_dimensions,
     # Golden ratio
     golden_ratio_pair,
     golden_ratio_score,
-    rule_of_thirds_position,
-    fibonacci_sequence,
-    # G2 curvature
-    g2_fillet_radius,
-    min_fillet_from_wall,
-    curvature_kappa,
-    g2_check,
-    # Draft angle
-    min_draft_angle_deg,
-    draft_taper_radius,
-    draft_compliance,
+    # Thermal
+    heat_flux,
+    hollow_shell_volume,
     # Hooke's law
     hookes_deformation,
-    max_tensile_stress,
-    spring_stiffness,
+    # Gas law
+    ideal_gas_pressure,
     # Newton's laws
     impact_force,
-    drop_velocity,
+    max_tensile_stress,
+    # Draft angle
+    min_draft_angle_deg,
+    min_fillet_from_wall,
+    nozzle_flow_rate_ml_s,
+    # Pareto
+    pareto_critical_features,
+    pythagorean_diagonal,
+    rectangular_section_I,
+    required_fin_area,
+    rule_of_thirds_position,
+    shaft_min_radius,
+    slenderness_ratio,
+    sphere_surface_area,
+    sphere_volume,
+    spring_stiffness,
     # Torque
     torque,
     torsional_shear_stress,
-    shaft_min_radius,
-    # Gas law
-    ideal_gas_pressure,
-    container_wall_thickness_pressure,
-    # Buckling
-    euler_buckling_load,
-    slenderness_ratio,
-    circular_section_I,
-    rectangular_section_I,
-    # Fluid
-    bernoulli_velocity,
-    nozzle_flow_rate_ml_s,
-    # Thermal
-    heat_flux,
-    required_fin_area,
-    # Pareto
-    pareto_critical_features,
-    # Fastener
-    bearing_seat_dim,
-    get_hole_dimensions,
+    torus_volume,
 )
 
 PI = math.pi
@@ -276,9 +277,9 @@ class TestGasLaw:
 class TestBuckling:
     def test_euler_buckling_known(self):
         # P_cr = pi^2 * E * I / (K*L)^2
-        E, I, L, K = 200000, 100, 500, 1.0
-        expected = PI**2 * E * I / (K * L)**2
-        assert euler_buckling_load(E, I, L, K) == pytest.approx(expected, rel=1e-10)
+        modulus, moi, length, eff_k = 200000, 100, 500, 1.0
+        expected = PI**2 * modulus * moi / (eff_k * length)**2
+        assert euler_buckling_load(modulus, moi, length, eff_k) == pytest.approx(expected, rel=1e-10)
 
     def test_slenderness_ratio(self):
         assert slenderness_ratio(1000, 5) == pytest.approx(200.0)

@@ -7,20 +7,19 @@ Run this to ensure the semantic search system is working properly.
 """
 
 import sys
-import os
 
 # Verify imports work
 print("Checking imports...")
 
 try:
-    from services.semantic_search import (
-        detect_semantic_features,
-        keyword_match_score,
-        feature_alignment_score,
-        composite_ranking_score,
-        search_parts,
+    from services.semantic_search import (  # noqa: F401
+        FEATURE_SIGNATURES,
         SearchResult,
-        FEATURE_SIGNATURES
+        composite_ranking_score,
+        detect_semantic_features,
+        feature_alignment_score,
+        keyword_match_score,
+        search_parts,
     )
     print("✅ services/semantic_search.py imports OK")
 except ImportError as e:
@@ -107,7 +106,7 @@ with open("main.py", "r") as f:
     else:
         print("  ❌ search_router import NOT found")
         sys.exit(1)
-    
+
     if "app.include_router(search_router)" in main_content:
         print("  ✅ search_router registration found")
     else:

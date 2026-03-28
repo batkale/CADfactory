@@ -6,23 +6,34 @@ when generated scripts fail execution.
 Location: cadfactory-backend/services/claude_cad.py
 """
 
-import os
 import logging
-from typing import Optional
+import os
 from dataclasses import dataclass
+from typing import Optional
 
 from google import genai
 from google.genai import types as genai_types
 
 from config.prompts import (
-    build_system_prompt, build_system_prompt_with_examples,
-    RETRY_PROMPT_TEMPLATE, LOAD_SUGGESTION_PROMPT,
-    REFINE_SYSTEM_PROMPT, DESIGN_PLAN_PROMPT, DESIGN_PLAN_TO_CODE_TEMPLATE,
-    QUALITY_ENHANCE_PROMPT, QUALITY_RETRY_PROMPT,
-    SHAPE_RESEARCH_PROMPT, SHAPE_RESEARCH_PROMPT_TO_PLAN, SHAPE_RESEARCH_INJECTION,
+    DESIGN_PLAN_PROMPT,
+    DESIGN_PLAN_TO_CODE_TEMPLATE,
+    LOAD_SUGGESTION_PROMPT,
+    QUALITY_ENHANCE_PROMPT,
+    QUALITY_RETRY_PROMPT,
+    REFINE_SYSTEM_PROMPT,
+    RETRY_PROMPT_TEMPLATE,
+    SHAPE_RESEARCH_INJECTION,
+    SHAPE_RESEARCH_PROMPT,
+    SHAPE_RESEARCH_PROMPT_TO_PLAN,
+    build_system_prompt,
+    build_system_prompt_with_examples,
 )
-from services.script_utils import extract_python_code, validate_script, parse_json_response
-from services.cadquery_runner import execute_cadquery_sandboxed, ExecutionResult
+from services.cadquery_runner import ExecutionResult, execute_cadquery_sandboxed
+from services.script_utils import (
+    extract_python_code,
+    parse_json_response,
+    validate_script,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -176,15 +187,15 @@ def check_complexity(description: str) -> Optional[str]:
                 )
                 if complex_count >= 2:
                     return (
-                        f"This design is too complex for single-step generation. "
-                        f"AI generation works best with single-body parts like brackets, "
-                        f"enclosures, plates, and mounts.\n\n"
-                        f"Try breaking it into separate parts:\n"
-                        f"  • Generate each component individually\n"
-                        f"  • 'motor mount with 25mm bore and M3 holes'\n"
-                        f"  • 'spur gear 20 teeth, module 1.5, 8mm bore'\n"
-                        f"  • 'gear housing 80x60x30mm with bearing seats'\n\n"
-                        f"Then assemble them in your CAD software or slicer."
+                        "This design is too complex for single-step generation. "
+                        "AI generation works best with single-body parts like brackets, "
+                        "enclosures, plates, and mounts.\n\n"
+                        "Try breaking it into separate parts:\n"
+                        "  • Generate each component individually\n"
+                        "  • 'motor mount with 25mm bore and M3 holes'\n"
+                        "  • 'spur gear 20 teeth, module 1.5, 8mm bore'\n"
+                        "  • 'gear housing 80x60x30mm with bearing seats'\n\n"
+                        "Then assemble them in your CAD software or slicer."
                     )
 
     # Check for multiple distinct parts requested
@@ -198,10 +209,10 @@ def check_complexity(description: str) -> Optional[str]:
 
     if multi_count >= 2 or plural_parts >= 2:
         return (
-            f"This looks like a multi-part assembly. AI generation works best "
-            f"with one part at a time.\n\n"
-            f"Try generating each component separately, then combine them "
-            f"in your analysis."
+            "This looks like a multi-part assembly. AI generation works best "
+            "with one part at a time.\n\n"
+            "Try generating each component separately, then combine them "
+            "in your analysis."
         )
 
     return None  # Complexity is OK
@@ -240,8 +251,8 @@ def _research_shape_grounded(description: str, prompt: str) -> Optional[str]:
     Use Gemini with Google Search grounding for accurate product research.
     Gets real dimensions, standard specs, and component details from the web.
     """
+
     import httpx
-    import json
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -312,6 +323,7 @@ async def generate_script(
     Falls back to single-pass if planning fails.
     """
     import json
+
     from services import rag_store
 
     # ── Pass 0: Shape research (if not already provided) ──────────────────────
@@ -403,6 +415,7 @@ async def generate_and_execute(
     This is the main entry point called by the router.
     """
     import time
+
     from services.script_utils import extract_bom_from_script
 
     start_time = time.time()
@@ -660,6 +673,7 @@ async def refine_script(
     Conversational refinement: modify an existing script based on user feedback.
     """
     import time
+
     from services.script_utils import extract_bom_from_script
 
     start_time = time.time()

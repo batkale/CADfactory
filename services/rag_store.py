@@ -14,9 +14,8 @@ Storage location: ./rag_store/  (configurable via RAG_STORE_DIR env var)
 
 from __future__ import annotations
 
-import os
 import logging
-from typing import Optional
+import os
 
 logger = logging.getLogger(__name__)
 

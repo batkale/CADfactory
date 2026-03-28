@@ -6,16 +6,15 @@ with timeout and resource limits, exports STL and STEP files.
 Location: cadfactory-backend/services/cadquery_runner.py
 """
 
+import json
+import logging
 import os
+import shutil
 import subprocess
 import tempfile
-import shutil
-import json
 import uuid
-import logging
-from pathlib import Path
-from typing import Optional, List
 from dataclasses import dataclass, field
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -56,21 +55,21 @@ def execute_cadquery_sandboxed(
 ) -> ExecutionResult:
     """
     Execute a CadQuery script in an isolated subprocess.
-    
+
     The script is written to a temp file with export commands injected,
     then run via subprocess with timeout. Produces STL and optionally STEP.
-    
+
     Args:
         script: Valid CadQuery Python code. Must define a `result` variable.
         timeout: Max execution time in seconds.
         export_step: Also export STEP format alongside STL.
-        
+
     Returns:
         ExecutionResult with paths to generated files or error details.
     """
     import time
     start_time = time.time()
-    
+
     # Basic sanity checks
     if len(script) > MAX_SCRIPT_LENGTH:
         return ExecutionResult(
@@ -102,20 +101,20 @@ def execute_cadquery_sandboxed(
                 error=f"Script contains blocked operation: '{pattern}'. "
                       "Only CadQuery geometry operations are allowed."
             )
-    
+
     # Ensure output directory exists
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    
+
     # Generate unique filenames
     file_id = uuid.uuid4().hex[:12]
     final_stl = os.path.join(OUTPUT_DIR, f"{file_id}.stl")
     final_step = os.path.join(OUTPUT_DIR, f"{file_id}.step") if export_step else None
-    
+
     with tempfile.TemporaryDirectory(prefix="cadquery_") as tmpdir:
         script_path = os.path.join(tmpdir, "part.py")
         tmp_stl = os.path.join(tmpdir, "part.stl")
         tmp_step = os.path.join(tmpdir, "part.step")
-        
+
         # Copy any extra files (e.g. reference STEP) into tmpdir
         if extra_files:
             for dest_name, src_path in extra_files.items():
@@ -127,7 +126,7 @@ def execute_cadquery_sandboxed(
 
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(exec_script)
-        
+
         try:
             # Build a restricted environment:
             # - Limit CPU threads to prevent resource exhaustion
@@ -162,9 +161,9 @@ def execute_cadquery_sandboxed(
                 cwd=tmpdir,
                 env=sandbox_env,
             )
-            
+
             elapsed = time.time() - start_time
-            
+
             if result.returncode != 0:
                 if os.path.exists(tmp_stl) and os.path.getsize(tmp_stl) > 0 and \
                    os.path.exists(tmp_step) and os.path.getsize(tmp_step) > 0:
@@ -176,7 +175,7 @@ def execute_cadquery_sandboxed(
                             error_msg = f"Crash/Error. Stdout: {_clean_error(result.stdout)}"
                         else:
                             error_msg = "Hard crash (Access Violation / Segfault) in OpenCascade kernel. The geometry operations you attempted are invalid (likely a bad fillet/chamfer or self-intersecting boolean). Please simplify the design and AVOID complex fillets."
-                    
+
                     logger.warning(f"CadQuery script failed ({elapsed:.1f}s): {error_msg[:200]}")
                     return ExecutionResult(
                         success=False,
@@ -184,7 +183,7 @@ def execute_cadquery_sandboxed(
                         stdout=result.stdout,
                         execution_time_s=elapsed
                     )
-            
+
             # Check that STL was actually created
             if not os.path.exists(tmp_stl) or os.path.getsize(tmp_stl) == 0:
                 return ExecutionResult(
@@ -194,14 +193,14 @@ def execute_cadquery_sandboxed(
                     stdout=result.stdout,
                     execution_time_s=elapsed
                 )
-            
+
             # Move files to persistent storage
             shutil.copy2(tmp_stl, final_stl)
             if export_step and os.path.exists(tmp_step):
                 shutil.copy2(tmp_step, final_step)
-            
+
             logger.info(f"CadQuery script succeeded ({elapsed:.1f}s): {final_stl}")
-            
+
             # Parse parts manifest and quality warnings from stdout
             parts_list = []
             quality_warnings = []
@@ -234,7 +233,7 @@ def execute_cadquery_sandboxed(
                 parts=parts_list,
                 quality_warnings=quality_warnings
             )
-            
+
         except subprocess.TimeoutExpired:
             elapsed = time.time() - start_time
             logger.warning(f"CadQuery script timed out after {timeout}s")
@@ -262,7 +261,7 @@ def _build_execution_script(
 ) -> str:
     """
     Wrap the user's CadQuery script with imports and export commands.
-    
+
     Injects:
     - cadquery import (if missing)
     - A no-op show_object function (since we're headless)
@@ -271,7 +270,7 @@ def _build_execution_script(
     # Escape the paths for Windows compatibility
     stl_path_escaped = stl_path.replace("\\", "\\\\")
     step_path_escaped = step_path.replace("\\", "\\\\")
-    
+
     header = """
 import sys
 import cadquery as cq
@@ -301,7 +300,7 @@ def show_object(obj, name=None, options=None):
         __parts__.append((obj, name or f"part_{len(__parts__)}", options or {}))
 
 """
-    
+
     # Remove any existing cadquery import from user script to avoid duplicates
     lines = user_script.split("\n")
     filtered_lines = []
@@ -312,9 +311,9 @@ def show_object(obj, name=None, options=None):
         if stripped == "from cadquery import exporters":
             continue
         filtered_lines.append(line)
-    
+
     clean_script = "\n".join(filtered_lines)
-    
+
     # Quality analysis + Export commands — high quality mesh
     export_block = f"""
 
@@ -337,15 +336,15 @@ try:
     result.val().exportStl("{stl_path_escaped}", tolerance=0.01, angularTolerance=0.05)
     print(f"STL exported: {{os.path.getsize('{stl_path_escaped}')}} bytes")
 """
-    
+
     if export_step:
         export_block += f"""
     exporters.export(result, "{step_path_escaped}", exportType="STEP")
     print(f"STEP exported: {{os.path.getsize('{step_path_escaped}')}} bytes")
 """
-    
+
     export_block += """
-    
+
     # Export individual parts if any were shown
     print("__MANIFEST__:[", end="")
     for i, (obj, name, opts) in enumerate(__parts__):
@@ -368,7 +367,7 @@ except Exception as e:
     print(f"ERROR exporting: {e}", file=sys.stderr)
     sys.exit(1)
 """
-    
+
     # Need os for file size check
     full_script = "import os\n" + header + clean_script + export_block
     return full_script
@@ -381,12 +380,12 @@ def _clean_error(stderr: str) -> str:
     """
     if not stderr:
         return "Unknown error (no stderr output)"
-    
+
     lines = stderr.strip().split("\n")
-    
+
     # Find the actual error message (usually the last line)
     error_line = lines[-1] if lines else "Unknown error"
-    
+
     # Also grab context if it's a CadQuery-specific error
     relevant_lines = []
     capture = False
@@ -398,10 +397,10 @@ def _clean_error(stderr: str) -> str:
             cleaned = line.replace("/tmp/", "").strip()
             if cleaned:
                 relevant_lines.append(cleaned)
-    
+
     if relevant_lines:
         return "\n".join(relevant_lines[-5:])  # Last 5 relevant lines
-    
+
     return error_line
 
 
@@ -414,18 +413,18 @@ def get_file_url(file_path: str) -> str:
 def cleanup_old_files(max_age_hours: int = 24):
     """Remove generated files older than max_age_hours."""
     import time
-    
+
     if not os.path.exists(OUTPUT_DIR):
         return
-    
+
     cutoff = time.time() - (max_age_hours * 3600)
     removed = 0
-    
+
     for filename in os.listdir(OUTPUT_DIR):
         filepath = os.path.join(OUTPUT_DIR, filename)
         if os.path.getmtime(filepath) < cutoff:
             os.remove(filepath)
             removed += 1
-    
+
     if removed:
         logger.info(f"Cleaned up {removed} old generated files")
