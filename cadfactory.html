@@ -207,8 +207,33 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
 .gen-stage.stage-active{color:var(--cyan)}
 .gen-stage-icon{width:18px;text-align:center;font-size:12px;flex-shrink:0;font-style:normal}
 .gen-stage-spin{display:inline-block;width:12px;height:12px;border:2px solid var(--border2);border-top-color:var(--cyan);border-radius:50%;animation:spin 0.6s linear infinite}
+/* Image-to-CAD */
+.img2cad-toggle{width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:10px 14px;color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;text-align:left;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.img2cad-toggle:hover{border-color:var(--cyan);color:var(--text)}
+.img2cad-panel{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px}
+.img2cad-drop{border:2px dashed var(--border2);border-radius:10px;padding:24px;text-align:center;cursor:pointer;transition:all 0.15s;position:relative}
+.img2cad-drop:hover,.img2cad-drop.drag-over{border-color:var(--cyan);background:var(--bg4)}
+.img2cad-drop input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+.img2cad-preview{margin-top:10px;display:flex;align-items:flex-start;gap:12px}
+.img2cad-preview img{width:120px;height:120px;object-fit:contain;border-radius:8px;border:1px solid var(--border);background:var(--bg4)}
+.img2cad-desc-wrap{flex:1;min-width:0}
+.img2cad-extracted{font-size:12px;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;max-height:120px;overflow-y:auto;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.img2cad-badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600;margin-bottom:6px}
+.img2cad-badge.edge{background:var(--cyan-bg, rgba(6,182,212,0.1));color:var(--cyan);border:1px solid var(--cyan)}
+.img2cad-badge.structured{background:rgba(139,92,246,0.12);color:#a78bfa;border:1px solid #a78bfa}
 .gen-result{margin-top:16px;text-align:left}
 .gen-result-card{background:var(--green-bg);border:1px solid var(--green-border);border-radius:12px;padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px}
+.gen-design-notes{margin-bottom:12px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.gen-design-notes-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;cursor:pointer;user-select:none}
+.gen-design-notes-head:hover{background:var(--bg3)}
+.gen-design-notes-head span:first-child{font-size:12px;font-weight:700;color:var(--text2);display:flex;align-items:center;gap:6px}
+.gen-design-notes-body{padding:12px 14px;border-top:1px solid var(--border)}
+.gen-design-seq{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:5px}
+.gen-design-seq li{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text2)}
+.gen-design-seq-num{min-width:20px;height:20px;border-radius:50%;background:var(--cyan);color:#000;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.gen-design-dims{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.gen-design-dim-tag{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text2)}
+.gen-design-dim-tag span{color:var(--text3);margin-right:3px}
 .gen-script-wrap{margin-top:12px;background:var(--bg3);border:1px solid var(--border);border-radius:12px;overflow:hidden}
 .gen-script-head{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--bg4)}
 .gen-script-head span{font-size:11px;color:var(--text3);font-weight:600}
@@ -432,6 +457,48 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
         </div>
       </div>
 
+      <!-- Image-to-CAD (GenCAD-inspired) -->
+      <button class="img2cad-toggle" onclick="toggleImg2CAD()">
+        <span>📷 From Image <span style="color:var(--text4);font-weight:400;font-size:11px">— upload a photo, sketch, or napkin drawing</span></span>
+        <span id="img2cad-toggle-icon">▸</span>
+      </button>
+      <div id="img2cad-section" class="hidden">
+        <div class="img2cad-panel">
+          <div class="img2cad-drop" id="img2cad-drop" onclick="$('img2cad-input').click()"
+               ondragover="event.preventDefault();this.classList.add('drag-over')"
+               ondragleave="this.classList.remove('drag-over')"
+               ondrop="img2cadHandleDrop(event)">
+            <input type="file" id="img2cad-input" accept="image/*" onchange="img2cadHandleFile(this.files[0])" onclick="event.stopPropagation()"/>
+            <div style="font-size:28px;margin-bottom:6px">🖼</div>
+            <div style="font-size:13px;color:var(--text2);font-weight:600">Drop image here or click to upload</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:4px">PNG, JPG, WebP · max 10MB · photos, sketches, napkin drawings</div>
+          </div>
+
+          <div id="img2cad-preview-wrap" class="hidden" style="margin-top:10px">
+            <div class="img2cad-preview">
+              <img id="img2cad-thumb" src="" alt="preview"/>
+              <div class="img2cad-desc-wrap">
+                <div style="font-size:11px;color:var(--text3);font-weight:600;margin-bottom:4px">EXTRACTED DESCRIPTION</div>
+                <div id="img2cad-badges" style="margin-bottom:6px"></div>
+                <div id="img2cad-extracted" class="img2cad-extracted" style="display:none"></div>
+                <div id="img2cad-status" style="font-size:12px;color:var(--text3)">Analyzing image...</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:10px">
+              <button class="btn btn-outline" style="font-size:12px;flex:1" onclick="img2cadUseDescription()" id="img2cad-btn-use" disabled>
+                ✏️ Edit then Generate
+              </button>
+              <button class="btn btn-cyan" style="font-size:12px;flex:1" onclick="img2cadGenerateDirect()" id="img2cad-btn-direct" disabled>
+                🚀 Generate Directly
+              </button>
+            </div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:10px;text-align:center">
+          — or type a description below —
+        </div>
+      </div>
+
       <textarea class="gen-textarea" id="gen-description" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();generatePart()}"
         placeholder="Describe your part...&#10;&#10;e.g., Servo mounting bracket for MG996R with 4x M3 bolt holes, 3mm wall thickness, cable routing slot on the back, rounded edges for FDM printing&#10;&#10;Ctrl+Enter to generate"></textarea>
 
@@ -468,6 +535,7 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
 
       <!-- Generation loading — staged progress -->
       <div id="gen-loading" class="gen-stages hidden">
+        <div class="gen-stage" id="gstage-analyzing_image" style="display:none"><i class="gen-stage-icon">○</i>Analyzing image...</div>
         <div class="gen-stage" id="gstage-understanding"><i class="gen-stage-icon">○</i>Understanding your description...</div>
         <div class="gen-stage" id="gstage-planning"><i class="gen-stage-icon">○</i>Designing geometry...</div>
         <div class="gen-stage" id="gstage-generating"><i class="gen-stage-icon">○</i>Generating CadQuery script...</div>
@@ -530,6 +598,15 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
 
         <!-- Warnings -->
         <div id="gen-warnings"></div>
+
+        <!-- AI Design Explanation -->
+        <div id="gen-design-notes" class="gen-design-notes hidden">
+          <div class="gen-design-notes-head" onclick="toggleDesignNotes()">
+            <span>🧠 AI Design Thinking</span>
+            <span id="gen-design-notes-chevron" style="font-size:11px;color:var(--text3)">▼</span>
+          </div>
+          <div id="gen-design-notes-body" class="gen-design-notes-body hidden"></div>
+        </div>
 
         <!-- Actions -->
         <div class="gen-actions">
@@ -3088,6 +3165,12 @@ var tplLibOpen = false;
 var activeTplId = null;
 var tplParamValues = {};
 
+function toggleDesignNotes(){
+  var body = $('gen-design-notes-body');
+  var open = body.classList.toggle('hidden');
+  $('gen-design-notes-chevron').textContent = open ? '▼' : '▲';
+}
+
 function toggleTemplateLib(){
   tplLibOpen = !tplLibOpen;
   $('tpl-section').classList.toggle('hidden', !tplLibOpen);
@@ -3291,6 +3374,183 @@ async function loadStepFiles(){
   } catch(e){}
 }
 
+// ── Image-to-CAD (GenCAD-inspired) ──────────────────────────────────────────
+
+var _img2cadOpen = false;
+var _img2cadFile = null;
+var _img2cadAnalysis = null;  // Last ImageToCADResponse
+
+function toggleImg2CAD(){
+  _img2cadOpen = !_img2cadOpen;
+  $('img2cad-section').classList.toggle('hidden', !_img2cadOpen);
+  $('img2cad-toggle-icon').textContent = _img2cadOpen ? '▾' : '▸';
+}
+
+function img2cadHandleDrop(e){
+  e.preventDefault();
+  $('img2cad-drop').classList.remove('drag-over');
+  var f = e.dataTransfer.files[0];
+  if(f) img2cadHandleFile(f);
+}
+
+async function img2cadHandleFile(file){
+  if(!file || !file.type.startsWith('image/')) return;
+  _img2cadFile = file;
+  _img2cadAnalysis = null;
+
+  // Show preview
+  var reader = new FileReader();
+  reader.onload = function(e){ $('img2cad-thumb').src = e.target.result; };
+  reader.readAsDataURL(file);
+
+  $('img2cad-preview-wrap').classList.remove('hidden');
+  $('img2cad-extracted').style.display = 'none';
+  $('img2cad-badges').innerHTML = '';
+  $('img2cad-status').textContent = '🔍 Analyzing image...';
+  $('img2cad-btn-use').disabled = true;
+  $('img2cad-btn-direct').disabled = true;
+
+  // Call /from-image to extract description
+  try {
+    var fd = new FormData();
+    fd.append('file', file);
+    var method = $('gen-method').value || 'fdm';
+    fd.append('manufacturing_method', method);
+
+    var res = await fetch(API + '/api/generate/from-image', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + TOKEN },
+      body: fd,
+    });
+    if(!res.ok){
+      var err = await res.json();
+      throw new Error(err.detail || 'Analysis failed');
+    }
+    var data = await res.json();
+    _img2cadAnalysis = data;
+
+    // Show badges
+    var badges = data.structured_plan ? '<span class="img2cad-badge structured">⬡ Structured plan</span>' : '';
+    $('img2cad-badges').innerHTML = badges;
+
+    // Show description
+    $('img2cad-extracted').textContent = data.extracted_description;
+    $('img2cad-extracted').style.display = '';
+    $('img2cad-status').textContent = '✅ Ready — choose an action below';
+    $('img2cad-btn-use').disabled = false;
+    $('img2cad-btn-direct').disabled = false;
+  } catch(e){
+    $('img2cad-status').textContent = '⚠ ' + e.message;
+  }
+}
+
+function img2cadUseDescription(){
+  if(!_img2cadAnalysis) return;
+  $('gen-description').value = _img2cadAnalysis.extracted_description;
+  $('gen-description').focus();
+  // Close image panel
+  _img2cadOpen = false;
+  $('img2cad-section').classList.add('hidden');
+  $('img2cad-toggle-icon').textContent = '▸';
+}
+
+async function img2cadGenerateDirect(){
+  if(!_img2cadFile) return;
+  hideGenErr();
+  $('btn-generate').disabled = true;
+  $('btn-generate').textContent = '⏳ Generating...';
+  $('gen-loading').classList.remove('hidden');
+  $('gen-result').classList.add('hidden');
+  $('gen-design-notes').classList.add('hidden');
+  $('gen-fail').classList.add('hidden');
+  resetGenStages();
+  // Show the analyzing_image stage
+  var imgStage = $('gstage-analyzing_image');
+  if(imgStage) imgStage.style.display = '';
+
+  $('img2cad-btn-direct').disabled = true;
+  $('img2cad-btn-use').disabled = true;
+
+  var fd = new FormData();
+  fd.append('file', _img2cadFile);
+  fd.append('manufacturing_method', $('gen-method').value || 'fdm');
+  var ctx = ($('gen-description').value || '').trim();
+  if(ctx) fd.append('additional_context', ctx);
+
+  try {
+    var res = await fetch(API + '/api/generate/from-image/stream', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + TOKEN },
+      body: fd,
+    });
+    if(!res.ok){
+      var errText = await res.text();
+      var errDetail = '';
+      try { errDetail = JSON.parse(errText).detail; } catch(e){ errDetail = errText; }
+      throw new Error((typeof errDetail === 'object' ? errDetail.error : errDetail) || 'Generation failed (HTTP ' + res.status + ')');
+    }
+
+    var reader = res.body.getReader();
+    var decoder = new TextDecoder();
+    var buf = '';
+    var finalData = null;
+    var curEvent = null;
+
+    while(true){
+      var chunk = await reader.read();
+      if(chunk.done) break;
+      buf += decoder.decode(chunk.value, {stream: true});
+      var lines = buf.split('\n');
+      buf = lines.pop();
+      for(var i = 0; i < lines.length; i++){
+        var line = lines[i];
+        if(line.startsWith('event: ')){
+          curEvent = line.slice(7).trim();
+        } else if(line.startsWith('data: ')){
+          try {
+            var data = JSON.parse(line.slice(6));
+            if(curEvent === 'progress'){
+              updateGenStage(data.stage, data.label, data.done);
+            } else if(curEvent === 'image_analysis'){
+              if(data.structured_plan) $('img2cad-badges').innerHTML = '<span class="img2cad-badge structured">⬡ Structured plan</span>';
+              if(data.description){
+                $('img2cad-extracted').textContent = data.description;
+                $('img2cad-extracted').style.display = '';
+                $('img2cad-status').textContent = '✅ Image analyzed';
+              }
+            } else if(curEvent === 'result'){
+              finalData = data;
+            }
+          } catch(e){}
+          curEvent = null;
+        }
+      }
+    }
+
+    if(!finalData) throw new Error('No result received from server');
+    if(!finalData.success){
+      if(finalData.script){ showGenFailure(finalData); return; }
+      throw new Error(finalData.error || 'Generation failed');
+    }
+    if(finalData.stl_url){
+      showGenResult(finalData);
+      await startGenViewer(finalData.parts, finalData.stl_url);
+    }
+  } catch(e){
+    console.error('img2cad stream error:', e);
+    $('img2cad-status').textContent = '⚠ ' + e.message;
+    showGenErr('Image generate error: ' + e.message);
+  } finally {
+    $('btn-generate').disabled = false;
+    $('btn-generate').textContent = '🤖 Generate Part';
+    $('gen-loading').classList.add('hidden');
+    var imgStage = $('gstage-analyzing_image');
+    if(imgStage) imgStage.style.display = 'none';
+    $('img2cad-btn-direct').disabled = false;
+    $('img2cad-btn-use').disabled = false;
+  }
+}
+
 async function generatePart(){
   hideGenErr();
   $('gen-clarification').classList.add('hidden');
@@ -3325,6 +3585,7 @@ async function _doGenerate(endpoint, body){
   $('btn-generate').textContent = '⏳ Generating...';
   $('gen-loading').classList.remove('hidden');
   $('gen-result').classList.add('hidden');
+  $('gen-design-notes').classList.add('hidden');
   $('gen-fail').classList.add('hidden');
   resetGenStages();
 
@@ -3402,10 +3663,11 @@ function showGenResult(data){
   var pipeline = data.pipeline || null;
   window._genPipeline = pipeline;
   var pipelineBadge = {
-    'csg_builder':  '⚡ Geometry tree',
-    'tuned_model':  '🎯 Fine-tuned model',
-    'ai_fallback':  '🤖 Gemini AI',
-    'refine':       '✏️ Refined',
+    'csg_builder':   '⚡ Geometry tree',
+    'tuned_model':   '🎯 Fine-tuned model',
+    'ai_fallback':   '🤖 Gemini AI',
+    'refine':        '✏️ Refined',
+    'image_to_cad':  '📷 From Image',
   }[pipeline] || '';
   var meta = [];
   if(pipelineBadge) meta.push(pipelineBadge);
@@ -3456,6 +3718,45 @@ function showGenResult(data){
     }).join('');
   } else {
     $('gen-warnings').innerHTML = '';
+  }
+
+  // AI Design Notes
+  var dn = data.design_notes;
+  if(dn){
+    var dnEl = $('gen-design-notes');
+    var dnBody = $('gen-design-notes-body');
+    dnEl.classList.remove('hidden');
+    // Keep collapsed by default — user can expand
+    dnBody.classList.add('hidden');
+    $('gen-design-notes-chevron').textContent = '▼';
+
+    var html = '';
+    // Dims
+    if(dn.dims && Object.keys(dn.dims).length){
+      html += '<div style="font-size:11px;color:var(--text3);font-weight:600;margin-bottom:6px">KEY DIMENSIONS</div>';
+      html += '<div class="gen-design-dims">';
+      Object.keys(dn.dims).forEach(function(k){
+        html += '<div class="gen-design-dim-tag"><span>'+k+'</span>'+dn.dims[k]+' mm</div>';
+      });
+      html += '</div>';
+    }
+    // Sequence
+    if(dn.sequence && dn.sequence.length){
+      html += '<div style="font-size:11px;color:var(--text3);font-weight:600;margin-bottom:6px">BUILD SEQUENCE</div>';
+      html += '<ol class="gen-design-seq">';
+      dn.sequence.forEach(function(s, i){
+        html += '<li><span class="gen-design-seq-num">'+(i+1)+'</span><span>'+s+'</span></li>';
+      });
+      html += '</ol>';
+    }
+    // Notes
+    if(dn.notes){
+      html += '<div style="font-size:11px;color:var(--text3);font-weight:600;margin:10px 0 4px">DESIGN NOTES</div>';
+      html += '<div style="font-size:12px;color:var(--text2);line-height:1.5">'+dn.notes+'</div>';
+    }
+    dnBody.innerHTML = html;
+  } else {
+    $('gen-design-notes').classList.add('hidden');
   }
 
   // Store STL URL for analysis + part_id for feedback
