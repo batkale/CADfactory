@@ -198,16 +198,18 @@ def check_complexity(description: str) -> Optional[str]:
                         "Then assemble them in your CAD software or slicer."
                     )
 
-    # Check for multiple distinct parts requested
-    multi_part_signals = ["and a ", " with 2 ", " with 3 ", " two ", " three ",
-                          " both ", " assembly of ", " complete ", " full "]
-    multi_count = sum(1 for s in multi_part_signals if s in desc_lower)
+    # Check for multiple distinct *top-level* parts requested.
+    # Only flag when the user is clearly asking for a multi-body assembly,
+    # not when a description mentions features like "two holes" or "three sides".
+    explicit_assembly = [" assembly of ", " set of ", " pair of "]
+    explicit_count = sum(1 for s in explicit_assembly if s in desc_lower)
 
-    part_count_words = [" gears", " motors", " shafts", " bearings", " springs",
-                        " pulleys", " wheels", " arms", " links"]
-    plural_parts = sum(1 for p in part_count_words if p in desc_lower)
+    # Distinct high-level mechanical components (not features)
+    distinct_components = [" motors", " shafts", " bearings", " springs",
+                           " pulleys", " wheels", " axles", " pistons"]
+    component_count = sum(1 for p in distinct_components if p in desc_lower)
 
-    if multi_count >= 2 or plural_parts >= 2:
+    if explicit_count >= 1 or component_count >= 3:
         return (
             "This looks like a multi-part assembly. AI generation works best "
             "with one part at a time.\n\n"
