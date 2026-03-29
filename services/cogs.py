@@ -1,4 +1,6 @@
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 """
@@ -18,11 +20,7 @@ Sources:
   Density Al 6061: 2.70 g/cm³
 """
 
-import math
-from dataclasses import dataclass, field
-from typing import Dict
-from services.geometry import GeometryResult
-
+from services.geometry import GeometryResult  # noqa: E402
 
 # ── Material database ─────────────────────────────────────────
 

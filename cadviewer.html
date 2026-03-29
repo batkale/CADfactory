@@ -774,7 +774,17 @@ async function loadFromUrl(url){
     if(!resp.ok) throw new Error('HTTP ' + resp.status);
     var buf = await resp.arrayBuffer();
     var filename = url.split('/').pop().split('?')[0] || 'model';
+    // Prefer the server-supplied filename from Content-Disposition so that
+    // URLs like /files/123/download resolve to the real extension (.stp, etc.)
+    var cd = resp.headers.get('content-disposition');
+    if(cd){
+      var cdMatch = cd.match(/filename[^;=\n]*=\s*(?:['"]([^'"]*)|([^;\s]*))/i);
+      if(cdMatch) filename = (cdMatch[1] || cdMatch[2] || filename).trim();
+    }
     var ext = filename.split('.').pop().toLowerCase();
+    // Secondary signal: Content-Type header (e.g. application/step)
+    var ct = (resp.headers.get('content-type') || '').toLowerCase();
+    if(ct.includes('step')) ext = 'step';
 
     if(ext === 'step' || ext === 'stp'){
       await loadSTEPBuffer(buf, filename);

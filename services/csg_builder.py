@@ -8,11 +8,11 @@ Location: cadfactory-backend/services/csg_builder.py
 
 from __future__ import annotations
 
-import math
 import logging
+import math
 from typing import List
 
-from services.semantic_decomposer import DecomposedObject, CSGOperation
+from services.semantic_decomposer import CSGOperation, DecomposedObject
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def _curve_prism_lines(var: str, params: dict) -> List[str]:
             f"{pv} = []",
             f"for _i in range({N}):",
             f"    _t = 2.0 * _math.pi * _i / {N}",
-            f"    _st = _math.sin(_t)",
+            "    _st = _math.sin(_t)",
             f"    _x = float(_math.cos(_t) * {w2:.3f})",
             f"    _y = float(_math.copysign(abs(_st)**1.5, _st) * {h2:.3f})",
             f"    {pv}.append((_x, _y, 0.0))",
@@ -111,7 +111,8 @@ def _curve_prism_lines(var: str, params: dict) -> List[str]:
         w   = float(params.get("width", 30.0))
         h   = float(params.get("depth", params.get("height_2d", 40.0)))
         sw  = float(params.get("shaft_width", w * 0.35)) / 2.0
-        hw  = w / 2.0;  hh = h / 2.0
+        hw  = w / 2.0
+        hh = h / 2.0
         lines += [
             f"{pv} = [(0.0,{hh:.3f},0.0),({hw:.3f},0.0,0.0),({sw:.3f},0.0,0.0),"
             f"({sw:.3f},-{hh:.3f},0.0),(-{sw:.3f},-{hh:.3f},0.0),"
@@ -122,7 +123,8 @@ def _curve_prism_lines(var: str, params: dict) -> List[str]:
         w   = float(params.get("width",  30.0))
         h   = float(params.get("depth", params.get("height_2d", 30.0)))
         aw  = float(params.get("arm_width", min(w, h) * 0.35)) / 2.0
-        hw  = w / 2.0;  hh = h / 2.0
+        hw  = w / 2.0
+        hh = h / 2.0
         lines += [
             f"{pv} = [({aw:.3f},{hh:.3f},0.0),(-{aw:.3f},{hh:.3f},0.0),"
             f"(-{aw:.3f},{aw:.3f},0.0),(-{hw:.3f},{aw:.3f},0.0),"
@@ -246,10 +248,10 @@ def _build_primitive_expr(shape: str, params: dict) -> str:
         return f"cq.Workplane('XY').cylinder({h}, {r})"
 
     elif s == "box":
-        l = float(p.get("length", 20))
+        length = float(p.get("length", 20))
         w = float(p.get("width", 20))
         h = float(p.get("height", 10))
-        return f"cq.Workplane('XY').box({l}, {w}, {h})"
+        return f"cq.Workplane('XY').box({length}, {w}, {h})"
 
     elif s == "sphere":
         r = float(p.get("radius", 10))
@@ -267,13 +269,13 @@ def _build_primitive_expr(shape: str, params: dict) -> str:
         return f"cq.Workplane('XZ').center({major_r}, 0).circle({minor_r}).revolve()"
 
     elif s == "rounded_box":
-        l = float(p.get("length", 20))
+        length = float(p.get("length", 20))
         w = float(p.get("width", 20))
         h = float(p.get("height", 10))
-        r = float(p.get("fillet_r", min(l, w, h) * 0.1))
+        r = float(p.get("fillet_r", min(length, w, h) * 0.1))
         # Fillet wrapped in try/except to avoid CadQuery topology failures
         return (
-            f"_tmp_box_cq.Workplane('XY').box({l}, {w}, {h})"
+            f"_tmp_box_cq.Workplane('XY').box({length}, {w}, {h})"
         ).replace("_tmp_box_", "")  # placeholder — handled below
 
     elif s == "polygon_prism":
@@ -318,7 +320,7 @@ def build_cadquery_script(obj: DecomposedObject) -> str:
 
     # Part tracking — group operations by label
     parts: dict[str, List[tuple[str, str]]] = {} # label -> list of (var, op)
-    
+
     # Industrial Color Palette
     COLOR_PALETTE = ["steelblue", "goldenrod", "gray", "indianred", "darkolivegreen"]
 
@@ -350,10 +352,10 @@ def build_cadquery_script(obj: DecomposedObject) -> str:
                 lines.extend(_curve_prism_lines(var, op.params))
             elif is_rounded:
                 p = op.params
-                l = float(p.get("length", 20))
+                length = float(p.get("length", 20))
                 w = float(p.get("width", 20))
                 h = float(p.get("height", 10))
-                prim = f"cq.Workplane('XY').box({l}, {w}, {h})"
+                prim = f"cq.Workplane('XY').box({length}, {w}, {h})"
                 lines.append(f"{var} = {prim}")
             else:
                 prim = _build_primitive_expr(op.shape, op.params)
@@ -362,9 +364,12 @@ def build_cadquery_script(obj: DecomposedObject) -> str:
             # Apply rotations and translations
             if op.rotation:
                 rx, ry, rz = (op.rotation + [0.0, 0.0, 0.0])[:3]
-                if rx: lines.append(f"{var} = {var}.rotate((0,0,0), (1,0,0), {rx})")
-                if ry: lines.append(f"{var} = {var}.rotate((0,0,0), (0,1,0), {ry})")
-                if rz: lines.append(f"{var} = {var}.rotate((0,0,0), (0,0,1), {rz})")
+                if rx:
+                    lines.append(f"{var} = {var}.rotate((0,0,0), (1,0,0), {rx})")
+                if ry:
+                    lines.append(f"{var} = {var}.rotate((0,0,0), (0,1,0), {ry})")
+                if rz:
+                    lines.append(f"{var} = {var}.rotate((0,0,0), (0,0,1), {rz})")
 
             if copy_angle is not None and copy_angle != 0:
                 lines.append(f"{var} = {var}.rotate((0,0,0), (0,0,1), {copy_angle:.3f})")

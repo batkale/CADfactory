@@ -14,10 +14,9 @@ Location: cadfactory-backend/services/ai_validator.py
 from __future__ import annotations
 
 import logging
-import math
 import re
-from typing import Optional, List, Dict, Any
-from dataclasses import dataclass, field
+from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -180,7 +179,7 @@ def research_object_expectations(description: str) -> GeometricExpectation:
     Use AI to research what geometric features the described object should have.
     This is the 'ground truth' that we validate against.
     """
-    from services.claude_cad import _generate_content, MODEL_FLASH
+    from services.claude_cad import MODEL_FLASH, _generate_content
     from services.script_utils import parse_json_response
 
     prompt = _RESEARCH_PROMPT.format(description=description)
@@ -215,7 +214,7 @@ def validate_script_against_expectations(
     Use AI to validate whether a generated script matches the expected features.
     Also performs static analysis to count holes/cuts.
     """
-    from services.claude_cad import _generate_content, MODEL_FLASH
+    from services.claude_cad import MODEL_FLASH, _generate_content
     from services.script_utils import parse_json_response
 
     # Static analysis: count cut operations in script
@@ -225,7 +224,6 @@ def validate_script_against_expectations(
     total_subtractive = cut_count + hole_count + subtract_count
 
     expected_total_holes = sum(h.get("count", 1) for h in expectations.expected_holes)
-    expected_cavities = len(expectations.expected_cavities)
 
     # Quick static check: if we expect holes but have none, that's already bad
     static_confidence = 1.0
@@ -315,7 +313,7 @@ def correct_script(
     Use AI to fix a script that failed validation.
     Returns the corrected script, or None if correction fails.
     """
-    from services.claude_cad import _generate_content, MODEL_FLASH
+    from services.claude_cad import MODEL_FLASH, _generate_content
     from services.script_utils import extract_python_code
 
     if not validation.missing_holes and not validation.missing_features:

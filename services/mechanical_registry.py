@@ -3,8 +3,10 @@ Mechanical DNA Registry — General industrial design patterns and their constra
 Used to inject dynamic engineering 'priors' into the AI generation layers.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List
+
 from pydantic import BaseModel
+
 
 class MechanicalDNA(BaseModel):
     name: str
@@ -42,7 +44,7 @@ MECHANICAL_REGISTRY: Dict[str, MechanicalDNA] = {
             "weight: cylinder r=11.05, h=10, pos=[28,0,0], op=subtract, copies=3, angle=120"
         )
     ),
-    
+
     "ENCLOSURE": MechanicalDNA(
         name="Consumer Storage & Assembly",
         description="A hollow shell with integrated mechanical interfaces (pumps, nozzles, lids).",
@@ -71,7 +73,7 @@ MECHANICAL_REGISTRY: Dict[str, MechanicalDNA] = {
             "spout: cylinder r=4, h=30, pos=[15,0,88.5], angle=[0,90,0]"
         )
     ),
-    
+
     "STRUCTURAL_BRACKET": MechanicalDNA(
         name="Structural Bracket",
         description="A component designed to hold two planes or parts at a fixed angle.",
@@ -115,7 +117,7 @@ def get_dna_prompt_injection(dna_key: str) -> str:
     dna = MECHANICAL_REGISTRY.get(dna_key)
     if not dna:
         return ""
-        
+
     instr = f"\nAPPLY {dna.name.upper()} REFERENCE STANDARDS:\n"
     instr += f"Description: {dna.description}\n"
     instr += "Rules to Enforce:\n"

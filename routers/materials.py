@@ -1,9 +1,12 @@
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import APIRouter, Depends
-import security as auth_utils
+
 import models
+import security as auth_utils
 from services.cogs import MATERIALS, PROCESSES, REGIONS, VOLUME_TIERS
 
 router = APIRouter(prefix="/materials", tags=["Reference Data"])

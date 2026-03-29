@@ -17,8 +17,9 @@ import os
 import base64
 import logging
 import mimetypes
-from typing import Optional
+import os
 from dataclasses import dataclass, field
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -149,6 +150,40 @@ class ImageAnalysisResult:
 
 async def _call_gemini_vision(b64_data: str, mime_type: str, prompt: str) -> str:
     """Send an image + prompt to Gemini Vision and return the text response."""
+    import httpx
+    return base64.b64encode(data).decode("utf-8"), mime_type
+
+
+def _encode_image_bytes_base64(image_bytes: bytes, filename: str = "image.png") -> tuple[str, str]:
+    """Base64-encode image bytes. Returns (b64_data, mime_type)."""
+    mime_type, _ = mimetypes.guess_type(filename)
+    if mime_type is None:
+        mime_type = "image/png"
+
+    return base64.b64encode(image_bytes).decode("utf-8"), mime_type
+
+
+async def analyze_image_for_cad(
+    image_path: Optional[str] = None,
+    image_bytes: Optional[bytes] = None,
+    filename: str = "image.png",
+    extract_description: bool = True,
+) -> ImageAnalysisResult:
+    """
+    Analyze an image using Gemini Vision and extract a CAD-suitable description.
+
+    Args:
+        image_path: Path to an image file (PNG, JPG, etc.)
+        image_bytes: Raw image bytes (alternative to image_path)
+        filename: Original filename (for MIME type detection)
+        extract_description: If True, extract a text-to-CAD description.
+                           If False, extract structured analysis only.
+
+    Returns:
+        ImageAnalysisResult with description and optional metadata.
+    """
+    import json
+
     import httpx
 
     if not GEMINI_API_KEY:

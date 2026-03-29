@@ -1,13 +1,17 @@
-import sys, os, logging
+import logging
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from database import get_db
+
 import models
 import schemas
 import security as auth_utils
+from database import get_db
 
 logger = logging.getLogger("cadfactory.auth")
 

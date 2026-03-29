@@ -12,8 +12,8 @@ Location: cadfactory-backend/services/object_knowledge.py
 
 from __future__ import annotations
 
-from typing import Optional, List, Dict
 from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 
 @dataclass

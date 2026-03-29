@@ -4,8 +4,8 @@ Each function returns a string of CadQuery code.
 
 Location: cadfactory-backend/services/templates.py
 """
-import math
 from typing import List
+
 
 def make_bolt(params: dict) -> str:
     """Standard bolt/screw template."""
@@ -14,7 +14,7 @@ def make_bolt(params: dict) -> str:
     head_h = d * 1.0  # Approx proportion
     head_d = d * 1.6
     hex_size = d * 0.8
-    
+
     return f"""import cadquery as cq
 # Generated via make_bolt template
 d = {d:.2f}
@@ -35,16 +35,16 @@ show_object(result)
 
 def make_enclosure(params: dict) -> str:
     """Simple project box/enclosure template."""
-    l = params.get("length", 100.0) or 100.0
+    length = params.get("length", 100.0) or 100.0
     w = params.get("width", 50.0) or 50.0
     h = params.get("height", 30.0) or 30.0
     t = params.get("wall_thickness", 2.0) or 2.0
-    
+
     return f"""import cadquery as cq
 # Generated via make_enclosure template
 result = (
     cq.Workplane("XY")
-    .box({l:.2f}, {w:.2f}, {h:.2f})
+    .box({length:.2f}, {w:.2f}, {h:.2f})
     .faces(">Z")
     .shell(-{t:.2f})
 )
@@ -59,7 +59,7 @@ def make_bracket(params: dict) -> str:
     width = params.get("width", 30.0) or 30.0
     thickness = params.get("thickness", 3.0) or 3.0
     hole_d = params.get("hole_diameter", 4.0) or 4.0
-    
+
     return f"""import cadquery as cq
 # Generated via make_bracket template
 result = (
@@ -81,18 +81,18 @@ show_object(result)
 
 def make_plate_with_holes(params: dict) -> str:
     """Flat plate with a rectangular pattern of holes."""
-    l = params.get("length", 100.0) or 100.0
+    length = params.get("length", 100.0) or 100.0
     w = params.get("width", 100.0) or 100.0
     t = params.get("thickness", 5.0) or 5.0
     hole_d = params.get("hole_diameter", 5.0) or 5.0
     spacing_x = params.get("hole_spacing_x", 80.0) or 80.0
     spacing_y = params.get("hole_spacing_y", 80.0) or 80.0
-    
+
     return f"""import cadquery as cq
 # Generated via make_plate_with_holes template
 result = (
     cq.Workplane("XY")
-    .box({l:.2f}, {w:.2f}, {t:.2f})
+    .box({length:.2f}, {w:.2f}, {t:.2f})
     .faces(">Z").workplane()
     .rect({spacing_x:.2f}, {spacing_y:.2f}, forConstruction=True)
     .vertices()
@@ -110,7 +110,7 @@ def make_nema_motor_mount(params: dict) -> str:
     hole_d = 3.2 if size == 17 else 5.2
     thickness = params.get("thickness", 5.0)
     central_bore = 23.0 if size == 17 else 38.2
-    
+
     return f"""import cadquery as cq
 # Generated via make_nema_motor_mount template (NEMA {size})
 plate = {plate_size:.2f}
@@ -138,9 +138,9 @@ def make_standoff(params: dict) -> str:
     d = params.get("diameter", 6.0)
     hole_d = params.get("hole_diameter", 3.2)
     is_hex = params.get("is_hex", True)
-    
+
     shape_expr = f"polygon(6, {d:.2f})" if is_hex else f"circle({d/2:.2f})"
-    
+
     return f"""import cadquery as cq
 # Generated via make_standoff template
 result = (
@@ -159,18 +159,18 @@ def validate_template_params(name: str, params: dict) -> List[str]:
     errors = []
     if name == "bolt":
         d = params.get("diameter", 6.0) or 6.0
-        l = params.get("length", 30.0) or 30.0
-        if d > l:
-            errors.append(f"Bolt diameter ({d}mm) cannot be larger than length ({l}mm)")
-            
+        bolt_length = params.get("length", 30.0) or 30.0
+        if d > bolt_length:
+            errors.append(f"Bolt diameter ({d}mm) cannot be larger than length ({bolt_length}mm)")
+
     elif name == "enclosure":
-        l = params.get("length", 100.0) or 100.0
+        enc_length = params.get("length", 100.0) or 100.0
         w = params.get("width", 50.0) or 50.0
         h = params.get("height", 30.0) or 30.0
         t = params.get("wall_thickness", 2.0) or 2.0
-        if t * 2 >= min(l, w, h):
+        if t * 2 >= min(enc_length, w, h):
             errors.append(f"Wall thickness ({t}mm) is too large for enclosure dimensions")
-            
+
     elif name == "bracket":
         base = params.get("base_length", 50.0) or 50.0
         side = params.get("side_height", 40.0) or 40.0

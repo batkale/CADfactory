@@ -8,9 +8,9 @@ and any future ML features.
 Inspired by GenCAD's lack of reproducibility controls.
 """
 
+import logging
 import os
 import random
-import logging
 from typing import Optional
 
 import numpy as np

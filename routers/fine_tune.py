@@ -13,15 +13,15 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 import models
-from database import get_db
 import security as _sec
+from database import get_db
 from services import fine_tuner
 
 get_current_user = _sec.get_current_user
@@ -218,7 +218,7 @@ def activate_model(
 
     # Deactivate any previously active model
     db.query(models.TunedModel).filter(
-        models.TunedModel.is_active == True
+        models.TunedModel.is_active.is_(True)
     ).update({"is_active": False})
 
     job.is_active = True
@@ -239,7 +239,7 @@ def deactivate_all(
     """Deactivate all tuned models — generation will use the default base model."""
     updated = (
         db.query(models.TunedModel)
-        .filter(models.TunedModel.is_active == True)
+        .filter(models.TunedModel.is_active.is_(True))
         .update({"is_active": False})
     )
     db.commit()
@@ -258,8 +258,8 @@ def get_active_model(
     row = (
         db.query(models.TunedModel)
         .filter(
-            models.TunedModel.is_active == True,
-            models.TunedModel.tuned_model_name != None,
+            models.TunedModel.is_active.is_(True),
+            models.TunedModel.tuned_model_name.isnot(None),
         )
         .first()
     )

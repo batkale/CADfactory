@@ -7,22 +7,23 @@ Endpoints:
 """
 
 import logging
-from typing import Optional, List, Tuple
-from fastapi import APIRouter, Depends, Query, HTTPException
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 import security as auth_utils
-get_current_user = auth_utils.get_current_user
-
 from database import get_db
 from services.semantic_search import (
-    search_parts,
     SearchResult,
-    get_semantic_explanation,
+    composite_ranking_score,
     detect_semantic_features,
-    composite_ranking_score
+    get_semantic_explanation,
+    search_parts,
 )
+
+get_current_user = auth_utils.get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class SearchResultResponse(BaseModel):
     score: float = Field(..., description="Ranking score 0-100")
     match_confidence: float = Field(..., description="Query match confidence 0-1")
     features: List[str] = Field(..., description="Detected semantic features")
-    
+
     class Config:
         from_attributes = True
 
@@ -115,18 +116,18 @@ async def search_parts_endpoint(
 ):
     """
     Search generated parts with intelligent ranking.
-    
+
     The ranking system considers:
     - Keyword matching (does result match search query?)
     - Semantic features (detected rotational bearings, pop bubbles, etc.)
     - RAG similarity (vector embeddings to known good examples)
     - Manufacturing suitability (is design appropriate for the method?)
     - User feedback (have users rated similar parts highly?)
-    
-    Example: Query "fidget spinner" will rank actual spinners 
+
+    Example: Query "fidget spinner" will rank actual spinners
     (with bearings) above pop-it toys or other toys.
     """
-    
+
     # Build complexity range filter
     complexity_range = None
     if min_complexity is not None or max_complexity is not None:
@@ -134,7 +135,7 @@ async def search_parts_endpoint(
             min_complexity or 0,
             max_complexity or 10
         )
-    
+
     # Search
     try:
         results = search_parts(
@@ -148,7 +149,7 @@ async def search_parts_endpoint(
     except Exception as e:
         logger.error(f"Search failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
-    
+
     # Format response
     response_results = [
         SearchResultResponse(
@@ -160,7 +161,7 @@ async def search_parts_endpoint(
         )
         for r in results
     ]
-    
+
     explanation = None
     if explain:
         explanation = (
@@ -174,7 +175,7 @@ async def search_parts_endpoint(
             "✓ Rotational bearings, symmetry, hand-gripability\n"
             "✗ Avoids pop bubbles, silicone deformability"
         )
-    
+
     return SearchResponse(
         query=query,
         total_results=len(results),
@@ -203,39 +204,39 @@ async def explain_ranking(
     Get detailed explanation of why a part received its ranking score.
     Useful for understanding ranking decisions and debugging.
     """
-    
+
     import models
-    
+
     # Fetch part
     part = db.query(models.GeneratedPart).filter(
         models.GeneratedPart.id == int(part_id),
         models.GeneratedPart.user_id == current_user.id
     ).first()
-    
+
     if not part:
         raise HTTPException(status_code=404, detail="Part not found")
-    
+
     # Detect features
     import json
     bom = None
     if part.bom_suggestion:
         try:
             bom = json.loads(part.bom_suggestion) if isinstance(part.bom_suggestion, str) else part.bom_suggestion
-        except:
+        except Exception:
             pass
-    
+
     features = detect_semantic_features(part.description, bom)
-    
+
     # Get user feedback
     feedback = db.query(models.GenerationFeedback).filter(
         models.GenerationFeedback.part_id == part.id
     ).all()
-    
+
     avg_rating = None
     if feedback:
         import numpy as np
         avg_rating = np.mean([f.rating for f in feedback])
-    
+
     # Compute score
     score, breakdown = composite_ranking_score(
         query=query,
@@ -245,7 +246,7 @@ async def explain_ranking(
         user_rating=avg_rating,
         feedback_count=len(feedback)
     )
-    
+
     # Format response
     features_detail = [
         {
@@ -255,7 +256,7 @@ async def explain_ranking(
         }
         for f in features
     ]
-    
+
     explanation = get_semantic_explanation(SearchResult(
         part_id=str(part.id),
         description=part.description,
@@ -264,7 +265,7 @@ async def explain_ranking(
         semantic_features=features,
         match_confidence=breakdown.get("keyword_match", 0.5)
     ))
-    
+
     return ExplainResponse(
         part_id=str(part.id),
         description=part.description,
@@ -285,9 +286,9 @@ async def debug_extract_features(
     current_user = Depends(get_current_user)
 ):
     """Debug endpoint: see what semantic features are extracted from a description."""
-    
+
     features = detect_semantic_features(description)
-    
+
     return {
         "description": description,
         "features": [
