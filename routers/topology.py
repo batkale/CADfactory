@@ -2,23 +2,30 @@
 Topology optimization router.
 
 Endpoints:
-    POST /api/topology/optimize   — run SIMP on an uploaded STL
-    GET  /api/topology/files/{fn} — serve the optimised STL
+    POST /api/topology/optimize/stream — run SIMP on an uploaded STL, SSE progress
+    POST /api/topology/optimize        — blocking version (prefer /stream)
+    POST /api/topology/suggest-loads   — AI boundary condition suggestion
+    GET  /api/topology/files/{fn}      — serve the optimised STL
 """
 
 import asyncio
 import json as _json
 import logging
 import os
+import queue
+import threading
 import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+import models
 import security as auth_utils
-from services.cadquery_runner import OUTPUT_DIR  # reuse same output dir
+from database import get_db
+from services.cadquery_runner import OUTPUT_DIR
 from services.claude_cad import suggest_load_cases
 
 get_current_user = auth_utils.get_current_user
@@ -46,7 +53,7 @@ class OptimizeRequest(BaseModel):
     material_key: str = Field(default="pla",
                                description="Material key for mass/cost calc")
     description: Optional[str] = Field(default=None,
-                                        description="Part description — used to auto-set volfrac via AI")
+                                        description="Part description for AI-based volfrac/BC suggestion")
 
 
 class OptimizeResponse(BaseModel):
@@ -78,37 +85,67 @@ class SuggestLoadsRequest(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_SAFE_VOLFRAC = 0.50
+
+
 def _get_output_path(suffix: str = ".stl") -> tuple[str, str]:
-    """Return (absolute path, filename) for a new output file."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     fn = uuid.uuid4().hex[:12] + "_opt" + suffix
     return os.path.join(OUTPUT_DIR, fn), fn
 
 
-_SAFE_VOLFRAC = 0.50   # conservative default when AI doesn't give a recommendation
+def _get_file_or_404(file_id: int, user_id: int, db: Session) -> models.UploadedFile:
+    """Fetch an active UploadedFile belonging to the user, or raise 404."""
+    f = (
+        db.query(models.UploadedFile)
+        .filter(
+            models.UploadedFile.id == file_id,
+            models.UploadedFile.user_id == user_id,
+            models.UploadedFile.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not f:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not os.path.exists(f.upload_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    if f.file_format.upper() not in ("STL", "3MF"):
+        raise HTTPException(status_code=422, detail="Only STL/3MF files can be optimised")
+    return f
 
 
-async def _resolve_volfrac(req: OptimizeRequest) -> float:
+async def _resolve_volfrac(req: OptimizeRequest, stl_path: str) -> float:
     """
-    If volfrac is explicitly set, use it.
-    Otherwise call AI suggest_load_cases with the part description to get
-    recommended_volume_fraction. Falls back to _SAFE_VOLFRAC on any failure.
+    Return the volfrac to use.
+
+    Priority:
+      1. Explicitly set in the request → use as-is.
+      2. Description provided → ask AI using real file geometry.
+      3. Fallback to _SAFE_VOLFRAC.
     """
     if req.volfrac is not None:
         return req.volfrac
 
     if req.description:
         try:
+            from services.topology_opt import load_stl_triangles
+            import numpy as np
+            tris = load_stl_triangles(stl_path)
+            verts = tris.reshape(-1, 3)
+            mn, mx = verts.min(axis=0), verts.max(axis=0)
+            extents = mx - mn                         # mm
+            bbox_mm3 = float(np.prod(extents))        # bounding box volume in mm³
+            vol_mm3  = float(bbox_mm3 * 0.6)          # rough fill estimate
+
             suggestion = await suggest_load_cases(
                 description=req.description,
-                bbox=(50.0, 50.0, 50.0),   # rough defaults — we don't have geometry yet
-                volume=125_000.0,           # 5cm³ cube in mm³
-                surface_area=15_000.0,
+                bbox=(float(extents[0]), float(extents[1]), float(extents[2])),
+                volume=vol_mm3,
+                surface_area=0.0,
             )
             if suggestion:
                 ai_vf = suggestion.get("recommended_volume_fraction")
                 if isinstance(ai_vf, (int, float)) and 0.20 <= float(ai_vf) <= 0.80:
-                    # Clamp to a safe range — never let AI go below 0.30 (too risky)
                     return max(0.30, float(ai_vf))
         except Exception as e:
             logger.warning(f"AI volfrac suggestion failed: {e}")
@@ -119,67 +156,90 @@ async def _resolve_volfrac(req: OptimizeRequest) -> float:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/optimize/stream")
-async def optimize_stream(req: OptimizeRequest, user=Depends(get_current_user)):
+async def optimize_stream(
+    req: OptimizeRequest,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
-    Run topology optimization and stream progress via SSE.
+    Run topology optimization and stream real-time progress via SSE.
 
     Events:
       progress  — {"stage": str, "label": str, "pct": int}
       result    — OptimizeResponse JSON or {"error": str}
     """
-    import models
-    from database import SessionLocal
-
-    # Resolve file path from DB
-    db = SessionLocal()
-    try:
-        f = db.query(models.UploadedFile).filter(
-            models.UploadedFile.id == req.file_id,
-            models.UploadedFile.user_id == user.id,
-        ).first()
-        if not f:
-            raise HTTPException(status_code=404, detail="File not found")
-        stl_path   = f.upload_path
-        file_format = f.file_format.upper()
-    finally:
-        db.close()
-
-    if not os.path.exists(stl_path):
-        raise HTTPException(status_code=404, detail="STL file not found on disk")
-    if file_format not in ("STL", "3MF"):
-        raise HTTPException(status_code=422, detail="Only STL/3MF files can be optimised")
+    f = _get_file_or_404(req.file_id, user.id, db)
+    stl_path = f.upload_path
 
     output_path, output_fn = _get_output_path()
 
-    # Resolve volfrac (possibly via AI) before starting the SSE stream
-    volfrac = await _resolve_volfrac(req)
+    # Resolve volfrac using real file geometry before opening the stream
+    volfrac = await _resolve_volfrac(req, stl_path)
+    max_iter = max(40, int(req.resolution * 4.2))
 
     async def event_gen():
         def sse(event: str, data: dict) -> str:
             return f"event: {event}\ndata: {_json.dumps(data)}\n\n"
 
-        yield sse("progress", {"stage": "voxelizing",
-                                "label": f"Voxelizing mesh (target retention: {round(volfrac*100)}%)…",
-                                "pct": 5})
-        try:
-            from services.topology_opt import topology_optimize
-            result = await asyncio.to_thread(
-                topology_optimize,
-                stl_path=stl_path,
-                output_stl_path=output_path,
-                volfrac=volfrac,
-                resolution=req.resolution,
-                fixed_side=req.fixed_side,
-                load_side=req.load_side,
-                load_dir=req.load_dir,
-                material_key=req.material_key,
-                max_iter=80,          # enough iterations for continuation + Heaviside convergence
-            )
-        except Exception as e:
-            logger.error(f"Topology optimization failed: {e}", exc_info=True)
-            yield sse("result", {"error": str(e)})
+        yield sse("progress", {
+            "stage": "voxelizing",
+            "label": f"Voxelizing mesh (target retention: {round(volfrac * 100)}%)…",
+            "pct": 5,
+        })
+
+        # Progress events come from the optimizer thread via a thread-safe queue.
+        prog_queue: queue.SimpleQueue = queue.SimpleQueue()
+        result_holder: dict = {}
+        done_event = threading.Event()
+
+        def run_optimizer():
+            try:
+                from services.topology_opt import topology_optimize
+
+                def on_progress(iteration: int, total: int, obj: float, vol: float):
+                    pct = 10 + int(85 * iteration / total)
+                    prog_queue.put({
+                        "stage": "simp",
+                        "label": f"SIMP iteration {iteration}/{total} — vol {vol:.2f}",
+                        "pct": pct,
+                    })
+
+                result_holder["result"] = topology_optimize(
+                    stl_path=stl_path,
+                    output_stl_path=output_path,
+                    volfrac=volfrac,
+                    resolution=req.resolution,
+                    fixed_side=req.fixed_side,
+                    load_side=req.load_side,
+                    load_dir=req.load_dir,
+                    material_key=req.material_key,
+                    max_iter=max_iter,
+                    progress_callback=on_progress,
+                )
+            except Exception as exc:
+                result_holder["error"] = exc
+            finally:
+                done_event.set()
+
+        thread = threading.Thread(target=run_optimizer, daemon=True)
+        thread.start()
+
+        # Drain progress events while the thread runs
+        while not done_event.is_set():
+            await asyncio.sleep(0.4)
+            while not prog_queue.empty():
+                yield sse("progress", prog_queue.get_nowait())
+
+        # Drain any remaining events after thread finishes
+        while not prog_queue.empty():
+            yield sse("progress", prog_queue.get_nowait())
+
+        if "error" in result_holder:
+            logger.error(f"Topology optimization failed: {result_holder['error']}", exc_info=True)
+            yield sse("result", {"error": str(result_holder["error"])})
             return
 
+        result = result_holder["result"]
         yield sse("progress", {"stage": "done", "label": "Done!", "pct": 100})
         orig_fn = os.path.basename(result.get("original_stl_path", ""))
         yield sse("result", {
@@ -197,33 +257,20 @@ async def optimize_stream(req: OptimizeRequest, user=Depends(get_current_user)):
 
 
 @router.post("/optimize", response_model=OptimizeResponse)
-async def optimize_sync(req: OptimizeRequest, user=Depends(get_current_user)):
+async def optimize_sync(
+    req: OptimizeRequest,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
-    Blocking topology optimization endpoint (simpler alternative to /stream).
-    May time out for high-resolution grids — prefer /optimize/stream.
+    Blocking topology optimization endpoint (prefer /optimize/stream for long runs).
     """
-    import models
-    from database import SessionLocal
-
-    db = SessionLocal()
-    try:
-        f = db.query(models.UploadedFile).filter(
-            models.UploadedFile.id == req.file_id,
-            models.UploadedFile.user_id == user.id,
-        ).first()
-        if not f:
-            raise HTTPException(status_code=404, detail="File not found")
-        stl_path   = f.upload_path
-        file_format = f.file_format.upper()
-    finally:
-        db.close()
-
-    if not os.path.exists(stl_path):
-        raise HTTPException(status_code=404, detail="STL file not found on disk")
-    if file_format not in ("STL", "3MF"):
-        raise HTTPException(status_code=422, detail="Only STL/3MF files can be optimised")
+    f = _get_file_or_404(req.file_id, user.id, db)
+    stl_path = f.upload_path
 
     output_path, output_fn = _get_output_path()
+    volfrac = await _resolve_volfrac(req, stl_path)
+    max_iter = max(40, int(req.resolution * 4.2))
 
     try:
         from services.topology_opt import topology_optimize
@@ -231,25 +278,29 @@ async def optimize_sync(req: OptimizeRequest, user=Depends(get_current_user)):
             topology_optimize,
             stl_path=stl_path,
             output_stl_path=output_path,
-            volfrac=req.volfrac,
+            volfrac=volfrac,
             resolution=req.resolution,
             fixed_side=req.fixed_side,
             load_side=req.load_side,
             load_dir=req.load_dir,
             material_key=req.material_key,
+            max_iter=max_iter,
         )
     except Exception as e:
         logger.error(f"Topology optimization failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
     return OptimizeResponse(
-        **{k: v for k, v in result.items() if k != "output_stl_path"},
+        **{k: v for k, v in result.items() if k not in ("output_stl_path", "original_stl_path")},
         optimized_stl_url=f"/api/topology/files/{output_fn}",
     )
 
 
 @router.post("/suggest-loads")
-async def suggest_loads(req: SuggestLoadsRequest, user=Depends(get_current_user)):
+async def suggest_loads(
+    req: SuggestLoadsRequest,
+    user: models.User = Depends(get_current_user),
+):
     """Use AI to suggest boundary conditions from part description + geometry."""
     suggestions = await suggest_load_cases(
         description=req.description,
@@ -269,9 +320,7 @@ async def serve_optimized_file(filename: str):
         raise HTTPException(status_code=400, detail="Invalid filename")
     if not filename.endswith(".stl"):
         raise HTTPException(status_code=400, detail="Only STL files served here")
-
     filepath = os.path.join(OUTPUT_DIR, filename)
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="File not found")
-
     return FileResponse(filepath, media_type="application/sla", filename=filename)
