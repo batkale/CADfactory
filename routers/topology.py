@@ -173,7 +173,7 @@ async def optimize_stream(req: OptimizeRequest, user=Depends(get_current_user)):
                 load_side=req.load_side,
                 load_dir=req.load_dir,
                 material_key=req.material_key,
-                max_iter=60,          # more iterations → safer convergence, fewer empty-mesh errors
+                max_iter=80,          # enough iterations for continuation + Heaviside convergence
             )
         except Exception as e:
             logger.error(f"Topology optimization failed: {e}", exc_info=True)

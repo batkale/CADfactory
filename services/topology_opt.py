@@ -346,6 +346,36 @@ def _elem_dofs(ex: int, ey: int, ez: int, nx: int, ny: int) -> np.ndarray:
     return dofs
 
 
+def _heaviside_projection(
+    x: np.ndarray, beta: float, eta: float = 0.5,
+) -> np.ndarray:
+    """
+    Smooth Heaviside projection to push intermediate densities toward 0/1.
+
+    Parameters
+    ----------
+    x    : physical densities in [0, 1]
+    beta : sharpness parameter (higher = sharper threshold)
+    eta  : threshold (default 0.5)
+
+    Returns projected densities closer to binary 0/1.
+    """
+    num = np.tanh(beta * eta) + np.tanh(beta * (x - eta))
+    den = np.tanh(beta * eta) + np.tanh(beta * (1.0 - eta))
+    return num / den
+
+
+def _heaviside_derivative(
+    x: np.ndarray, beta: float, eta: float = 0.5,
+) -> np.ndarray:
+    """Derivative of smooth Heaviside projection w.r.t. x."""
+    den = np.tanh(beta * eta) + np.tanh(beta * (1.0 - eta))
+    cosh_val = np.cosh(beta * (x - eta))
+    # Protect against overflow for large beta
+    cosh_val = np.minimum(cosh_val, 1e10)
+    return beta / (cosh_val ** 2 * den)
+
+
 def run_simp(
     grid: np.ndarray,
     volfrac: float = 0.4,
@@ -355,19 +385,21 @@ def run_simp(
     load_side: str = "top",
     load_dir: int = 2,           # 0=x, 1=y, 2=z
     load_magnitude: float = -1.0,
-    max_iter: int = 40,
+    max_iter: int = 80,
     E0: float = 1.0,
     Emin: float = 1e-9,
 ) -> np.ndarray:
     """
-    3-D SIMP topology optimisation.
+    3-D SIMP topology optimisation with continuation, density filtering,
+    and Heaviside projection for crisp 0/1 results.
 
     Parameters
     ----------
     grid        : (nx, ny, nz) bool — solid design domain from voxelisation
     volfrac     : target volume fraction (0–1), e.g. 0.4 = keep 40 % of material
-    penal       : SIMP penalisation exponent (typically 3)
-    rmin        : sensitivity filter radius (in voxels)
+    penal       : final SIMP penalisation exponent (typically 3).
+                  A continuation scheme ramps from 1 up to this value.
+    rmin        : density filter radius (in voxels)
     fixed_side  : which face is clamped — 'bottom'|'top'|'left'|'right'|'front'|'back'
     load_side   : which face receives the load
     load_dir    : force direction (0=x, 1=y, 2=z)
@@ -387,9 +419,6 @@ def run_simp(
     # Precompute element stiffness matrix (same for all elements, unit size)
     # KE stays float64 for numerical stability in the linear solve
     KE = _unit_ke()
-
-    # Use float32 for density arrays to halve memory on large grids
-    # (FEA solver uses float64 internally for numerical stability)
 
     # ── Precompute element→DOF mapping and COO row/col indices ────────────────
     logger.info(f"SIMP: assembling DOF maps for {nx}×{ny}×{nz} grid ({nelem} elements)")
@@ -421,13 +450,48 @@ def run_simp(
     # ── Load vector ───────────────────────────────────────────────────────────
     F = _load_vector(load_side, load_dir, load_magnitude, nx, ny, nz, ndof)
 
-    # ── Sensitivity filter weights ────────────────────────────────────────────
+    # ── Density filter weights ────────────────────────────────────────────────
     H, Hs = _filter_weights(nx, ny, nz, rmin)
+
+    # ── Continuation schedule ─────────────────────────────────────────────────
+    # Ramp penalization from 1 → penal_final over the first ~60% of iterations.
+    # This avoids local minima that occur when starting with high penalization.
+    penal_final = penal
+    penal_start = 1.0
+    continuation_iters = int(max_iter * 0.6)
+
+    # Heaviside projection: ramp beta from 1 → 32 to progressively sharpen
+    # intermediate densities toward 0/1. This produces cleaner topology results.
+    beta = 1.0
+    beta_max = 32.0
+    beta_increase_interval = max(8, max_iter // 8)
+
+    prev_obj = float("inf")
 
     # ── SIMP iterations ───────────────────────────────────────────────────────
     for iteration in range(max_iter):
+        # Continuation: ramp penalization
+        if iteration < continuation_iters:
+            cur_penal = penal_start + (penal_final - penal_start) * (iteration / continuation_iters)
+        else:
+            cur_penal = penal_final
+
+        # Increase Heaviside sharpness periodically
+        if iteration > 0 and iteration % beta_increase_interval == 0 and beta < beta_max:
+            beta = min(beta * 2, beta_max)
+            logger.debug(f"  Heaviside beta → {beta}")
+
+        # Apply density filter: x_filtered = H @ x / Hs
+        x_filt = np.asarray(H @ x).flatten() / Hs
+        x_filt = np.clip(x_filt, Emin, 1.0)
+
+        # Apply Heaviside projection for crisp 0/1 boundaries
+        x_phys = _heaviside_projection(x_filt, beta)
+        x_phys = np.clip(x_phys, Emin, 1.0).astype(np.float32)
+        x_phys[active == 0] = Emin
+
         # Effective modulus per element
-        xp = Emin + x ** penal * (E0 - Emin)
+        xp = Emin + x_phys ** cur_penal * (E0 - Emin)
 
         # Assemble global K
         vals = np.outer(xp, ke_flat).reshape(-1)
@@ -448,26 +512,47 @@ def run_simp(
         # Element sensitivities: ce = u_e^T * KE * u_e
         ue = U[all_edofs]                    # (nelem, 24)
         ce = np.einsum("ij,jk,ik->i", ue, KE, ue)   # element compliance
+        obj = float(np.sum(xp * ce))
 
-        # Sensitivity: dc/dx = -p * x^(p-1) * (E0 - Emin) * ce
-        dc = -penal * x ** (penal - 1) * (E0 - Emin) * ce
+        # Sensitivity: dc/dx_phys = -p * x_phys^(p-1) * (E0 - Emin) * ce
+        dc = -cur_penal * x_phys ** (cur_penal - 1) * (E0 - Emin) * ce
         dv = np.ones(nelem)
 
-        # Sensitivity filter
-        dc_f = (H @ (x * dc)) / (Hs * np.maximum(1e-3, x))
+        # Chain rule through Heaviside projection
+        dh = _heaviside_derivative(x_filt, beta)
+        dc = dc * dh
+        dv = dv * dh
 
-        # OC update (optimality criteria)
-        x_new = _oc_update(x, dc_f, dv, volfrac, active)
+        # Chain rule through density filter: df/dx = H^T @ (df/dx_filt) / Hs
+        dc = np.asarray(H.T @ (dc / Hs)).flatten()
+        dv = np.asarray(H.T @ (dv / Hs)).flatten()
+
+        # OC update (optimality criteria) on design variables
+        x_new = _oc_update(x, dc, dv, volfrac, active)
 
         change = np.max(np.abs(x_new - x))
+        obj_change = abs(obj - prev_obj) / max(abs(obj), 1e-12)
         x = x_new
-        logger.debug(f"  iter {iteration+1:3d}  vol={x.mean():.3f}  Δx={change:.4f}")
+        prev_obj = obj
 
-        if change < 0.01:
+        logger.debug(
+            f"  iter {iteration+1:3d}  p={cur_penal:.2f}  β={beta:.0f}  "
+            f"obj={obj:.4e}  vol={x_phys.mean():.3f}  Δx={change:.4f}"
+        )
+
+        # Converge only after continuation is done and changes are small
+        if iteration > continuation_iters and change < 0.005 and obj_change < 1e-4:
             logger.info(f"SIMP converged at iteration {iteration+1}")
             break
 
-    return x.reshape(nx, ny, nz)
+    # Return the final physical (filtered + projected) densities
+    x_filt = np.asarray(H @ x).flatten() / Hs
+    x_filt = np.clip(x_filt, Emin, 1.0)
+    x_phys = _heaviside_projection(x_filt, beta)
+    x_phys = np.clip(x_phys, Emin, 1.0).astype(np.float32)
+    x_phys[active == 0] = Emin
+
+    return x_phys.reshape(nx, ny, nz)
 
 
 def _boundary_dofs(side: str, nx: int, ny: int, nz: int) -> np.ndarray:
@@ -677,19 +762,25 @@ def extract_surface(
 def smooth_mesh(
     vertices: np.ndarray,
     faces: np.ndarray,
-    iterations: int = 6,
+    iterations: int = 8,
     lam: float = 0.5,
+    mu: float = -0.53,
 ) -> np.ndarray:
     """
-    Laplacian mesh smoothing — removes staircase voxel artifacts.
+    Taubin mesh smoothing — removes staircase voxel artifacts while
+    preserving mesh volume (unlike pure Laplacian which causes shrinkage).
 
-    Uses a sparse normalized adjacency matrix (D^-1 A) for a fully vectorized
-    update: v_i ← (1-λ)·v_i + λ·mean(neighbors).
+    Alternates a shrinking step (λ > 0) with an un-shrinking step (μ < 0).
+    This acts as a low-pass filter that removes high-frequency noise (staircase
+    edges) without the volume loss of pure Laplacian smoothing.
 
     Parameters
     ----------
-    iterations : how many smoothing passes (5-10 is typical)
-    lam        : blending factor per pass (0=no change, 1=full Laplacian)
+    iterations : how many Taubin pass-pairs (each pair = shrink + unshrink)
+    lam        : positive smoothing factor for the shrink step
+    mu         : negative smoothing factor for the unshrink step.
+                 Must satisfy mu < -lam to act as a band-pass filter.
+                 Default -0.53 (Taubin's recommended value for lam=0.5).
     """
     n = len(vertices)
     if n == 0 or len(faces) == 0:
@@ -714,7 +805,10 @@ def smooth_mesh(
 
     verts = vertices.copy()
     for _ in range(iterations):
+        # Shrink step (positive λ — standard Laplacian smoothing)
         verts = (1.0 - lam) * verts + lam * (L @ verts)
+        # Un-shrink step (negative μ — inflate back to counteract shrinkage)
+        verts = (1.0 - mu) * verts + mu * (L @ verts)
 
     return verts
 
@@ -734,8 +828,8 @@ def topology_optimize(
     load_magnitude: float = -1.0,
     material_key: str = "pla",
     penal: float = 3.0,
-    rmin: float = 1.4,
-    max_iter: int = 40,
+    rmin: float = 1.5,
+    max_iter: int = 80,
 ) -> dict:
     """
     Full topology optimization pipeline.
@@ -784,9 +878,15 @@ def topology_optimize(
         f"pitch={pitch:.2f}mm, vol={original_vol_cm3:.2f}cm³"
     )
 
-    logger.info("Running SIMP optimisation…")
+    # Scale filter radius with resolution for consistent results across
+    # different grid sizes. A radius of ~1.5 voxels works well for resolution=20;
+    # scale proportionally for other resolutions.
+    effective_rmin = rmin * (resolution / 20.0)
+    effective_rmin = max(1.2, min(effective_rmin, 3.5))  # clamp to reasonable range
+
+    logger.info(f"Running SIMP optimisation (rmin={effective_rmin:.2f})…")
     density = run_simp(
-        grid, volfrac=volfrac, penal=penal, rmin=rmin,
+        grid, volfrac=volfrac, penal=penal, rmin=effective_rmin,
         fixed_side=fixed_side, load_side=load_side,
         load_dir=load_dir, load_magnitude=load_magnitude,
         max_iter=max_iter,
@@ -812,9 +912,9 @@ def topology_optimize(
             "or using a higher voxel resolution."
         )
 
-    # Smooth away voxel staircase artifacts
-    logger.info("Smoothing mesh…")
-    verts = smooth_mesh(verts, faces, iterations=6, lam=0.5)
+    # Taubin smoothing: removes voxel staircase artifacts without volume shrinkage
+    logger.info("Smoothing mesh (Taubin)…")
+    verts = smooth_mesh(verts, faces, iterations=10, lam=0.5, mu=-0.53)
 
     # Write optimized STL
     stl_bytes = write_stl_binary(verts, faces)
