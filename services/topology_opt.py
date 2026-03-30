@@ -235,6 +235,45 @@ def _ray_z_intersections(triangles: np.ndarray, cx: float, cy: float) -> np.ndar
     return z
 
 
+def _find_boundary_voxels(grid: np.ndarray) -> np.ndarray:
+    """
+    Find voxels on the outer surface of the design domain.
+
+    A solid voxel is a boundary voxel if it has at least one non-solid
+    neighbour (or is on the edge of the grid). These should be frozen as
+    passive-solid during optimization to preserve the outer shape.
+
+    Returns a boolean array same shape as grid, True = boundary voxel.
+    """
+    nx, ny, nz = grid.shape
+    boundary = np.zeros_like(grid, dtype=bool)
+
+    for dx, dy, dz in [(1,0,0),(-1,0,0),(0,1,0),(0,-1,0),(0,0,1),(0,0,-1)]:
+        # For each direction, check if the neighbour is void or out of bounds
+        # Create shifted view: if neighbour is void → this voxel is boundary
+        # Voxels on the face of the grid are automatically boundary
+        if dx == 1:
+            boundary[:-1, :, :] |= grid[:-1, :, :] & ~grid[1:, :, :]
+            boundary[-1, :, :] |= grid[-1, :, :]   # grid edge
+        elif dx == -1:
+            boundary[1:, :, :] |= grid[1:, :, :] & ~grid[:-1, :, :]
+            boundary[0, :, :] |= grid[0, :, :]
+        elif dy == 1:
+            boundary[:, :-1, :] |= grid[:, :-1, :] & ~grid[:, 1:, :]
+            boundary[:, -1, :] |= grid[:, -1, :]
+        elif dy == -1:
+            boundary[:, 1:, :] |= grid[:, 1:, :] & ~grid[:, :-1, :]
+            boundary[:, 0, :] |= grid[:, 0, :]
+        elif dz == 1:
+            boundary[:, :, :-1] |= grid[:, :, :-1] & ~grid[:, :, 1:]
+            boundary[:, :, -1] |= grid[:, :, -1]
+        elif dz == -1:
+            boundary[:, :, 1:] |= grid[:, :, 1:] & ~grid[:, :, :-1]
+            boundary[:, :, 0] |= grid[:, :, 0]
+
+    return boundary
+
+
 def _detect_geometry_type(extents: np.ndarray) -> str:
     """
     Classify geometry as 'plate', 'beam', or 'bulk' based on aspect ratios.
@@ -445,6 +484,7 @@ def run_simp(
     max_iter: int = 80,
     E0: float = 1.0,
     Emin: float = 1e-9,
+    passive_solid: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     3-D SIMP topology optimisation with continuation, density filtering,
@@ -463,6 +503,8 @@ def run_simp(
     load_magnitude : signed force (negative = inward / compressive)
     max_iter    : maximum SIMP iterations
     E0, Emin    : full and void Young's moduli (relative units)
+    passive_solid : (nx, ny, nz) bool — voxels frozen at density=1 (not designable).
+                    Used to preserve outer shell / boundary.
 
     Returns
     -------
@@ -493,12 +535,24 @@ def run_simp(
     cols = np.tile(all_edofs, (1, 24)).reshape(-1)         # each col tiled 24 times
     ke_flat = KE.flatten()                                  # shape (576,)
 
-    # ── Identify active (solid) elements ─────────────────────────────────────
-    active = grid.reshape(-1).astype(float)  # 1=solid, 0=void; indexed [ez,ey,ex] flattened
+    # ── Identify active (solid) elements and passive (frozen) elements ────────
+    active = grid.reshape(-1).astype(float)  # 1=solid, 0=void
+    if passive_solid is not None:
+        frozen = passive_solid.reshape(-1).astype(bool)
+    else:
+        frozen = np.zeros(nelem, dtype=bool)
+
+    # Designable = solid AND not frozen
+    designable = (active > 0) & (~frozen)
+    n_designable = int(designable.sum())
+    n_frozen = int(frozen.sum())
+    logger.info(f"SIMP: {n_designable} designable, {n_frozen} frozen-solid, "
+                f"{int((active == 0).sum())} void elements")
 
     # ── Initial density (float32 for memory efficiency) ────────────────────
     x = np.full(nelem, volfrac, dtype=np.float32)
     x[active == 0] = Emin   # void cells stay void
+    x[frozen] = 1.0          # frozen cells always solid
 
     # ── Fixed DOFs ────────────────────────────────────────────────────────────
     fixed_dofs = _boundary_dofs(fixed_side, nx, ny, nz)
@@ -546,6 +600,7 @@ def run_simp(
         x_phys = _heaviside_projection(x_filt, beta)
         x_phys = np.clip(x_phys, Emin, 1.0).astype(np.float32)
         x_phys[active == 0] = Emin
+        x_phys[frozen] = 1.0   # frozen elements always fully solid
 
         # Effective modulus per element
         xp = Emin + x_phys ** cur_penal * (E0 - Emin)
@@ -584,8 +639,12 @@ def run_simp(
         dc = np.asarray(H.T @ (dc / Hs)).flatten()
         dv = np.asarray(H.T @ (dv / Hs)).flatten()
 
+        # Zero out sensitivities for frozen elements (no design change allowed)
+        dc[frozen] = 0.0
+        dv[frozen] = 0.0
+
         # OC update (optimality criteria) on design variables
-        x_new = _oc_update(x, dc, dv, volfrac, active)
+        x_new = _oc_update(x, dc, dv, volfrac, active, frozen)
 
         change = np.max(np.abs(x_new - x))
         obj_change = abs(obj - prev_obj) / max(abs(obj), 1e-12)
@@ -594,7 +653,7 @@ def run_simp(
 
         logger.debug(
             f"  iter {iteration+1:3d}  p={cur_penal:.2f}  β={beta:.0f}  "
-            f"obj={obj:.4e}  vol={x_phys.mean():.3f}  Δx={change:.4f}"
+            f"obj={obj:.4e}  vol={x_phys[designable].mean():.3f}  Δx={change:.4f}"
         )
 
         # Converge only after continuation is done and changes are small
@@ -608,6 +667,7 @@ def run_simp(
     x_phys = _heaviside_projection(x_filt, beta)
     x_phys = np.clip(x_phys, Emin, 1.0).astype(np.float32)
     x_phys[active == 0] = Emin
+    x_phys[frozen] = 1.0
 
     return x_phys.reshape(nx, ny, nz)
 
@@ -718,19 +778,31 @@ def _filter_weights(nx: int, ny: int, nz: int, rmin: float):
 def _oc_update(
     x: np.ndarray, dc: np.ndarray, dv: np.ndarray,
     volfrac: float, active: np.ndarray,
+    frozen: np.ndarray | None = None,
     x_min: float = 1e-3, x_max: float = 1.0, move: float = 0.2,
 ) -> np.ndarray:
-    """Optimality criteria density update with bisection on the Lagrange multiplier."""
+    """Optimality criteria density update with bisection on the Lagrange multiplier.
+
+    Frozen elements (passive solid) are kept at density 1.0 and excluded from
+    the volume constraint, so volfrac applies only to designable elements.
+    """
+    if frozen is None:
+        frozen = np.zeros(len(x), dtype=bool)
+
+    designable = (active > 0) & (~frozen)
+
     l1, l2 = 0.0, 1e9
     xnew = x.copy()
 
     while (l2 - l1) / (l1 + l2 + 1e-40) > 1e-4:
         lmid = 0.5 * (l1 + l2)
-        B = np.sqrt(np.maximum(0, -dc / (dv * lmid)))
+        B = np.sqrt(np.maximum(0, -dc / (dv * lmid + 1e-40)))
         xnew = np.clip(x * B, np.maximum(x_min, x - move), np.minimum(x_max, x + move))
         xnew[active == 0] = x_min   # keep void cells void
+        xnew[frozen] = 1.0          # keep frozen cells solid
 
-        if xnew[active > 0].mean() > volfrac:
+        # Volume constraint only over designable elements
+        if designable.any() and xnew[designable].mean() > volfrac:
             l1 = lmid
         else:
             l2 = lmid
@@ -935,67 +1007,31 @@ def topology_optimize(
         f"pitch={pitch:.2f}mm, vol={original_vol_cm3:.2f}cm³"
     )
 
-    # ── Plate-aware boundary condition adjustment ────────────────────────────
-    # For plate-like shapes, fixing/loading the large flat faces (top/bottom)
-    # creates uniform compression with no interesting load paths — the optimizer
-    # can't create holes. Automatically redirect to edge constraints.
+    # ── Boundary preservation: freeze outer shell voxels ────────────────────
+    # Detect voxels on the outer surface of the part and mark them as
+    # passive-solid (non-designable). The optimizer can only remove interior
+    # material, preserving the original shape's outline.
+    boundary = _find_boundary_voxels(grid)
+    n_boundary = int(boundary.sum())
+    n_interior = int(grid.sum()) - n_boundary
+    logger.info(
+        f"Boundary preservation: {n_boundary} shell voxels frozen, "
+        f"{n_interior} interior voxels designable"
+    )
+
+    # If interior is too small relative to total, don't freeze boundary
+    # (would leave nothing to optimize). Fall back to standard SIMP.
+    if n_interior < 0.15 * grid.sum():
+        logger.warning(
+            f"Only {n_interior} interior voxels ({100*n_interior/max(1,grid.sum()):.0f}%) — "
+            "disabling boundary freeze to allow meaningful optimization"
+        )
+        boundary = None
+
+    # ── Geometry type detection (for through-hole projection) ────────────────
     verts_all = triangles.reshape(-1, 3)
     extents = verts_all.max(axis=0) - verts_all.min(axis=0)
     geo_type = _detect_geometry_type(extents)
-
-    if geo_type == "plate":
-        thin_axis = int(np.argmin(extents))  # 0=x, 1=y, 2=z
-        # Map thin axis to the face-pair that spans the thin dimension
-        thin_faces = {0: ("left", "right"), 1: ("front", "back"), 2: ("bottom", "top")}
-        flat_lo, flat_hi = thin_faces[thin_axis]
-
-        # If fixed_side or load_side are on the flat faces, redirect to edges
-        adjusted = False
-        # Determine the two in-plane axes (the large ones)
-        in_plane = [i for i in range(3) if i != thin_axis]
-        # Pick the longer in-plane axis for fixed edge, shorter for load edge
-        if extents[in_plane[0]] >= extents[in_plane[1]]:
-            long_ax, short_ax = in_plane[0], in_plane[1]
-        else:
-            long_ax, short_ax = in_plane[1], in_plane[0]
-
-        edge_map = {
-            0: ("left", "right"),
-            1: ("front", "back"),
-            2: ("bottom", "top"),
-        }
-
-        if fixed_side in (flat_lo, flat_hi):
-            old_fixed = fixed_side
-            fixed_side = edge_map[long_ax][0]  # fix the low-side of the long edge
-            adjusted = True
-            logger.info(
-                f"Plate: redirected fixed_side '{old_fixed}' → '{fixed_side}' "
-                f"(edge constraint for better load paths)"
-            )
-
-        if load_side in (flat_lo, flat_hi):
-            old_load = load_side
-            load_side = edge_map[long_ax][1]  # load the opposite edge
-            # Also adjust load direction to be along the long in-plane axis
-            load_dir = long_ax
-            adjusted = True
-            logger.info(
-                f"Plate: redirected load_side '{old_load}' → '{load_side}', "
-                f"load_dir → {load_dir} (in-plane loading for through-holes)"
-            )
-
-        if fixed_side == load_side:
-            # Ensure they're not the same after adjustment
-            load_side = edge_map[short_ax][1]
-            load_dir = short_ax
-            logger.info(f"Plate: load_side → '{load_side}' to avoid same-face conflict")
-
-        if adjusted:
-            logger.info(
-                f"Plate optimization: fixed='{fixed_side}', load='{load_side}', "
-                f"dir={load_dir} (in-plane BCs enable through-holes)"
-            )
 
     # Scale filter radius with resolution for consistent results across
     # different grid sizes. A radius of ~1.5 voxels works well for resolution=20;
@@ -1009,19 +1045,22 @@ def topology_optimize(
         fixed_side=fixed_side, load_side=load_side,
         load_dir=load_dir, load_magnitude=load_magnitude,
         max_iter=max_iter,
+        passive_solid=boundary,
     )
 
     # ── Plate through-hole enforcement ───────────────────────────────────────
     # For plate-like shapes, project densities through the thin axis so that
-    # partial-thickness voids become clean through-holes. This averages the
-    # density along the thin axis and assigns the mean to every voxel in that
-    # column — creating crisp solid/void decisions that go all the way through.
+    # partial-thickness voids become clean through-holes. Average interior
+    # densities along the thin axis; boundary voxels stay solid.
     if geo_type == "plate":
         thin_axis = int(np.argmin(extents))
         logger.info(f"Plate: projecting densities through thin axis {thin_axis} for through-holes")
-        # Average density along the thin axis, broadcast back
         mean_along_thin = density.mean(axis=thin_axis, keepdims=True)
-        density = np.broadcast_to(mean_along_thin, density.shape).copy()
+        projected = np.broadcast_to(mean_along_thin, density.shape).copy()
+        # Only apply projection to non-boundary voxels
+        if boundary is not None:
+            projected[boundary] = density[boundary]
+        density = projected
 
     # Adaptive threshold: start at 0.5, fall back progressively so that a
     # degraded SIMP solve (e.g. bad BCs) still produces a usable mesh.
