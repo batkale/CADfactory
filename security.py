@@ -3,11 +3,11 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import bcrypt as _bcrypt
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 import models
@@ -27,18 +27,19 @@ if SECRET_KEY == "changeme-not-for-production":
         "Set a strong SECRET_KEY in your .env file before starting the server."
     )
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
 def hash_password(password: str) -> str:
-    hashed = pwd_context.hash(password)
+    pw = password.encode("utf-8")[:72]
+    hashed = _bcrypt.hashpw(pw, _bcrypt.gensalt())
     logger.debug("Password hashed successfully")
-    return hashed
+    return hashed.decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    result = pwd_context.verify(plain, hashed)
+    pw = plain.encode("utf-8")[:72]
+    result = _bcrypt.checkpw(pw, hashed.encode("utf-8"))
     logger.debug(f"Password verify: {'match' if result else 'no match'}")
     return result
 
