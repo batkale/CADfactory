@@ -1137,7 +1137,7 @@ h1{font-size:40px;font-weight:900;line-height:1.1;margin-bottom:16px;color:var(-
 
 <script>
 // ── CONFIG ───────────────────────────────────────────────────
-var API = 'http://localhost:8000';
+var API = ((window.location.protocol === 'file:') ? 'http://localhost:8000' : window.location.origin) + '/v1';
 // 3D Gen Viewer State (now handled by embedded cadviewer.html iframe)
 
 // ── STATE ────────────────────────────────────────────────────

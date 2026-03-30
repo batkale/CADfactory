@@ -4,6 +4,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -103,6 +105,7 @@ def delete_account(
     db: Session = Depends(get_db),
 ):
     logger.info(f"DELETE account — user_id={current_user.id} email={current_user.email!r}")
-    db.delete(current_user)
+    current_user.deleted_at = datetime.now(timezone.utc)
+    current_user.is_active = False
     db.commit()
-    logger.info(f"DELETE account success — user_id={current_user.id}")
+    logger.info(f"DELETE account success (soft) — user_id={current_user.id}")

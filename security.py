@@ -22,7 +22,10 @@ ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 10080))
 
 if SECRET_KEY == "changeme-not-for-production":
-    logger.warning("WARNING: SECRET_KEY is using the default insecure value - set SECRET_KEY in your .env file")
+    raise RuntimeError(
+        "SECRET_KEY is set to the default insecure value. "
+        "Set a strong SECRET_KEY in your .env file before starting the server."
+    )
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")

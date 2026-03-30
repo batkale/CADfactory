@@ -7,14 +7,15 @@ from fastapi import APIRouter, Depends
 
 import models
 import security as auth_utils
-from services.cogs import MATERIALS, PROCESSES, REGIONS, VOLUME_TIERS
+from services.cogs import ADDITIVE_MATERIALS, MATERIALS, PROCESSES, REGIONS, VOLUME_TIERS
 
 router = APIRouter(prefix="/materials", tags=["Reference Data"])
 
 
 @router.get("/")
 def list_materials(_: models.User = Depends(auth_utils.get_current_user)):
-    """All supported materials with properties."""
+    """All supported materials with properties (CNC + additive + molding)."""
+    all_materials = {**MATERIALS, **ADDITIVE_MATERIALS}
     return {
         k: {
             "id": k,
@@ -24,7 +25,7 @@ def list_materials(_: models.User = Depends(auth_utils.get_current_user)):
             "tensile_mpa": v["tensile_mpa"],
             "yield_mpa": v["yield_mpa"],
         }
-        for k, v in MATERIALS.items()
+        for k, v in all_materials.items()
     }
 
 
@@ -35,8 +36,8 @@ def list_processes(_: models.User = Depends(auth_utils.get_current_user)):
         k: {
             "id": k,
             "name": v["name"],
-            "mrr_cm3_hr": v["mrr_cm3_hr"],
-            "setup_hours": v["setup_hours"],
+            "type": v.get("type", "subtractive"),
+            "setup_hours": v.get("setup_hours", 0),
         }
         for k, v in PROCESSES.items()
     }

@@ -24,6 +24,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     files = relationship("UploadedFile", back_populates="owner", cascade="all, delete-orphan")
     reports = relationship("Report", back_populates="owner", cascade="all, delete-orphan")
@@ -42,6 +43,8 @@ class UploadedFile(Base):
     file_size_bytes = Column(Integer)
     upload_path = Column(String, nullable=False)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     owner = relationship("User", back_populates="files")
     reports = relationship("Report", back_populates="file", cascade="all, delete-orphan")
@@ -89,6 +92,7 @@ class Report(Base):
     ai_used = Column(Boolean, default=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     owner = relationship("User", back_populates="reports")
     file = relationship("UploadedFile", back_populates="reports")
@@ -109,6 +113,7 @@ class GeneratedPart(Base):
     attempts = Column(Integer, default=1)
     generation_time_s = Column(Float, default=0.0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     owner = relationship("User", back_populates="generated_parts")
     feedbacks = relationship("GenerationFeedback", back_populates="part", cascade="all, delete-orphan")

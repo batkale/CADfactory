@@ -3,6 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,6 +17,7 @@ from services import cogs as cogs_service
 from services import gemini as gemini_service
 from services import geometry as geo_service
 from services import storage
+from services.cache import cache_get, cache_set, make_hash_key
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
 
@@ -68,7 +70,15 @@ async def run_analysis(
     )
 
     # ── 5. AI analysis (Gemini, server-side key) ──────────────
-    ai_result, ai_used = await gemini_service.analyze_geometry(geom, cogs_data)
+    # Cache AI analysis by file hash + material + process to avoid duplicate API calls.
+    _ai_cache_key = make_hash_key("gemini_analysis", data) + f":{req.material}:{req.process}"
+    cached_ai = cache_get(_ai_cache_key)
+    if cached_ai is not None:
+        ai_result, ai_used = cached_ai, True
+    else:
+        ai_result, ai_used = await gemini_service.analyze_geometry(geom, cogs_data)
+        if ai_used:
+            cache_set(_ai_cache_key, ai_result, ttl=3600)  # cache for 1 hour
 
     # ── 5b. Real-time price search for BOM parts ───────────────
     bom_list = None
@@ -153,7 +163,10 @@ def list_reports(
 ):
     return (
         db.query(models.Report)
-        .filter(models.Report.user_id == current_user.id)
+        .filter(
+            models.Report.user_id == current_user.id,
+            models.Report.deleted_at.is_(None),
+        )
         .order_by(models.Report.created_at.desc())
         .offset(skip)
         .limit(limit)
@@ -170,6 +183,7 @@ def get_report(
     report = db.query(models.Report).filter(
         models.Report.id == report_id,
         models.Report.user_id == current_user.id,
+        models.Report.deleted_at.is_(None),
     ).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -185,10 +199,11 @@ def delete_report(
     report = db.query(models.Report).filter(
         models.Report.id == report_id,
         models.Report.user_id == current_user.id,
+        models.Report.deleted_at.is_(None),
     ).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
-    db.delete(report)
+    report.deleted_at = datetime.now(timezone.utc)
     db.commit()
 
 

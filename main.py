@@ -9,7 +9,7 @@ import time
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -44,11 +44,19 @@ logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 async def lifespan(app: FastAPI):
     logger.info("=== CADfactory starting up ===")
     try:
-        Base.metadata.create_all(bind=engine)
-        logger.info("OK: Database tables ready")
+        from alembic import command as alembic_command
+        from alembic.config import Config as AlembicConfig
+        alembic_cfg = AlembicConfig("alembic.ini")
+        alembic_command.upgrade(alembic_cfg, "head")
+        logger.info("OK: Database migrations applied")
     except Exception as e:
-        logger.error(f"FAIL: Database init failed: {e}")
-        raise
+        logger.warning(f"Alembic migration failed ({e}), falling back to create_all")
+        try:
+            Base.metadata.create_all(bind=engine)
+            logger.info("OK: Database tables ready (create_all fallback)")
+        except Exception as e2:
+            logger.error(f"FAIL: Database init failed: {e2}")
+            raise
     try:
         upload_dir = os.getenv("UPLOAD_DIR", "./uploads")
         os.makedirs(upload_dir, exist_ok=True)
@@ -93,6 +101,34 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+# ── Prometheus metrics (optional) ────────────────────────────
+try:
+    from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+    from fastapi.responses import Response as _Response
+
+    _http_requests_total = Counter(
+        "cadfactory_http_requests_total",
+        "Total HTTP requests",
+        ["method", "path", "status"],
+    )
+    _http_request_duration_seconds = Histogram(
+        "cadfactory_http_request_duration_seconds",
+        "HTTP request latency",
+        ["method", "path"],
+    )
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics():
+        return _Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+    _prometheus_enabled = True
+    logger.info("OK: Prometheus metrics enabled at /metrics")
+except ImportError:
+    _prometheus_enabled = False
+    logger.debug("prometheus_client not installed — /metrics endpoint disabled. "
+                 "Install with: pip install prometheus_client")
+
+
 # ── Request/response logger middleware ───────────────────────
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -106,11 +142,27 @@ async def log_requests(request: Request, call_next):
     elapsed = (time.time() - start) * 1000
     level = logging.WARNING if response.status_code >= 400 else logging.INFO
     logger.log(level, f"← {response.status_code} {request.method} {request.url.path} ({elapsed:.0f}ms)")
+
+    # Record Prometheus metrics if available
+    if _prometheus_enabled:
+        _path = request.url.path
+        _http_requests_total.labels(
+            method=request.method, path=_path, status=response.status_code
+        ).inc()
+        _http_request_duration_seconds.labels(
+            method=request.method, path=_path
+        ).observe(elapsed / 1000)
+
     return response
 
 # ── CORS ─────────────────────────────────────────────────────
 _allowed_origins = os.getenv("CORS_ORIGINS", "").strip()
 _origins = [o.strip() for o in _allowed_origins.split(",") if o.strip()] if _allowed_origins else ["*"]
+if _origins == ["*"]:
+    logger.warning(
+        "CORS is open to all origins ('*'). "
+        "Set CORS_ORIGINS in your .env file for production (e.g. https://yourdomain.com)."
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
@@ -125,6 +177,21 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── Routers ───────────────────────────────────────────────────
+# All API routes are versioned under /v1.
+# The unversioned paths are kept as aliases for backward compatibility.
+v1 = APIRouter(prefix="/v1")
+v1.include_router(auth.router)
+v1.include_router(files.router)
+v1.include_router(analysis.router)
+v1.include_router(materials.router)
+v1.include_router(generate_router)
+v1.include_router(topology_router)
+v1.include_router(feedback_router)
+v1.include_router(fine_tune_router)
+v1.include_router(search_router)
+app.include_router(v1)
+
+# Backward-compatible unversioned routes
 app.include_router(auth.router)
 app.include_router(files.router)
 app.include_router(analysis.router)

@@ -3,6 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
@@ -64,7 +65,10 @@ def list_files(
 ):
     return (
         db.query(models.UploadedFile)
-        .filter(models.UploadedFile.user_id == current_user.id)
+        .filter(
+            models.UploadedFile.user_id == current_user.id,
+            models.UploadedFile.deleted_at.is_(None),
+        )
         .order_by(models.UploadedFile.uploaded_at.desc())
         .offset(skip)
         .limit(limit)
@@ -81,6 +85,7 @@ def get_file(
     db_file = db.query(models.UploadedFile).filter(
         models.UploadedFile.id == file_id,
         models.UploadedFile.user_id == current_user.id,
+        models.UploadedFile.deleted_at.is_(None),
     ).first()
     if not db_file:
         raise HTTPException(status_code=404, detail="File not found")
@@ -96,6 +101,7 @@ def download_file(
     db_file = db.query(models.UploadedFile).filter(
         models.UploadedFile.id == file_id,
         models.UploadedFile.user_id == current_user.id,
+        models.UploadedFile.deleted_at.is_(None),
     ).first()
     if not db_file:
         raise HTTPException(status_code=404, detail="File not found")
@@ -115,10 +121,10 @@ def delete_file(
     db_file = db.query(models.UploadedFile).filter(
         models.UploadedFile.id == file_id,
         models.UploadedFile.user_id == current_user.id,
+        models.UploadedFile.deleted_at.is_(None),
     ).first()
     if not db_file:
         raise HTTPException(status_code=404, detail="File not found")
 
-    storage.delete_file(db_file.stored_filename)
-    db.delete(db_file)
+    db_file.deleted_at = datetime.now(timezone.utc)
     db.commit()

@@ -6,6 +6,7 @@ with timeout and resource limits, exports STL and STEP files.
 Location: cadfactory-backend/services/cadquery_runner.py
 """
 
+import ast
 import json
 import logging
 import os
@@ -47,6 +48,68 @@ class ExecutionResult:
     quality_warnings: List[str] = field(default_factory=list)
 
 
+# Modules that CadQuery scripts are never allowed to import
+_BLOCKED_MODULES = {
+    "socket", "urllib", "urllib3", "requests", "httpx", "http",
+    "subprocess", "shutil", "ctypes", "multiprocessing", "threading",
+    "ftplib", "smtplib", "telnetlib", "xmlrpc", "pickle", "shelve",
+    "pty", "tty", "termios", "signal", "resource",
+}
+
+# Builtins that should not appear in generated geometry scripts
+_BLOCKED_BUILTINS = {"eval", "exec", "compile", "__import__", "open"}
+
+# Dangerous os / sys attribute access patterns
+_BLOCKED_OS_ATTRS = {
+    "system", "popen", "execv", "execve", "execvp", "execvpe",
+    "spawnl", "spawnle", "spawnlp", "spawnlpe",
+    "remove", "unlink", "rmdir", "removedirs",
+    "fork", "forkpty",
+}
+
+
+def _validate_script_ast(script: str) -> str | None:
+    """
+    Parse the script with the Python AST and reject any node that imports a
+    blocked module or calls a blocked builtin / os attribute.
+
+    Returns an error string if the script is rejected, or None if it is safe.
+    """
+    try:
+        tree = ast.parse(script)
+    except SyntaxError as exc:
+        return f"Script has a syntax error: {exc}"
+
+    for node in ast.walk(tree):
+        # Block: import <blocked>  /  import <blocked>.x
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in _BLOCKED_MODULES:
+                    return f"Blocked import: '{alias.name}'. Only CadQuery geometry operations are allowed."
+
+        # Block: from <blocked> import ...
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                root = node.module.split(".")[0]
+                if root in _BLOCKED_MODULES:
+                    return f"Blocked import: 'from {node.module}'. Only CadQuery geometry operations are allowed."
+
+        # Block: eval(...), exec(...), __import__(...), open(...)
+        elif isinstance(node, ast.Call):
+            func = node.func
+            # Direct builtin call: eval(x)
+            if isinstance(func, ast.Name) and func.id in _BLOCKED_BUILTINS:
+                return f"Blocked call: '{func.id}(...)'. Only CadQuery geometry operations are allowed."
+            # Attribute call: os.system(...), os.remove(...), etc.
+            if isinstance(func, ast.Attribute):
+                if isinstance(func.value, ast.Name) and func.value.id == "os":
+                    if func.attr in _BLOCKED_OS_ATTRS:
+                        return f"Blocked call: 'os.{func.attr}(...)'. Only CadQuery geometry operations are allowed."
+
+    return None
+
+
 def execute_cadquery_sandboxed(
     script: str,
     timeout: int = EXECUTION_TIMEOUT,
@@ -77,30 +140,11 @@ def execute_cadquery_sandboxed(
             error=f"Script too long ({len(script)} chars, max {MAX_SCRIPT_LENGTH})"
         )
 
-    # Security: block dangerous imports and operations
-    BLOCKED_PATTERNS = [
-        "import socket", "import urllib", "import requests", "import http",
-        "import subprocess", "import shutil", "import ctypes",
-        "__import__", "eval(", "exec(",
-        "os.system", "os.popen", "os.exec",
-        "os.remove", "os.unlink", "os.rmdir",
-        "open(", "pathlib",  # except cadquery's own usage
-    ]
-    # Only check user script (not our injected wrapper)
-    script_lower = script.lower()
-    for pattern in BLOCKED_PATTERNS:
-        # Allow "open(" only within common CadQuery patterns
-        if pattern == "open(" and script_lower.count("open(") <= script_lower.count("# cadquery"):
-            continue
-        if pattern.lower() in script_lower:
-            # Allow pathlib/open if it looks like CadQuery usage
-            if pattern in ("open(", "pathlib") and "exportstl" in script_lower:
-                continue
-            return ExecutionResult(
-                success=False,
-                error=f"Script contains blocked operation: '{pattern}'. "
-                      "Only CadQuery geometry operations are allowed."
-            )
+    # Security: AST-based validation — reject dangerous imports and builtins.
+    # This is case-sensitive and cannot be bypassed by casing tricks.
+    validation_error = _validate_script_ast(script)
+    if validation_error:
+        return ExecutionResult(success=False, error=validation_error)
 
     # Ensure output directory exists
     os.makedirs(OUTPUT_DIR, exist_ok=True)
