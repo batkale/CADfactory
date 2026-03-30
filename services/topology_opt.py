@@ -235,9 +235,35 @@ def _ray_z_intersections(triangles: np.ndarray, cx: float, cy: float) -> np.ndar
     return z
 
 
+def _detect_geometry_type(extents: np.ndarray) -> str:
+    """
+    Classify geometry as 'plate', 'beam', or 'bulk' based on aspect ratios.
+
+    - plate: one dimension is much thinner than the other two (aspect > 3:1)
+    - beam:  two dimensions are much thinner than the third (aspect > 3:1)
+    - bulk:  roughly equal dimensions
+    """
+    sorted_ext = np.sort(extents)  # ascending: thin, mid, thick
+    if sorted_ext[0] < 1e-6:
+        return "plate"
+    ratio_thin = sorted_ext[2] / sorted_ext[0]   # thick / thinnest
+    ratio_mid  = sorted_ext[2] / sorted_ext[1]   # thick / middle
+
+    if ratio_thin > 3.0 and ratio_mid < 2.0:
+        # One axis much thinner, other two similar → plate
+        return "plate"
+    elif ratio_thin > 3.0 and ratio_mid > 3.0:
+        # Two axes much thinner → beam
+        return "beam"
+    return "bulk"
+
+
 def voxelize(triangles: np.ndarray, resolution: int = 20):
     """
     Convert triangle mesh to boolean voxel grid using Z-axis ray casting.
+
+    For plate-like geometries (one thin dimension), ensures adequate voxels
+    through the thickness so topology optimization can create through-holes.
 
     Returns:
         grid  : (nx, ny, nz) bool array  — True = inside mesh
@@ -250,12 +276,43 @@ def voxelize(triangles: np.ndarray, resolution: int = 20):
     extents = mx - mn
     extents = np.maximum(extents, 1e-6)
 
+    geo_type = _detect_geometry_type(extents)
     max_ext = extents.max()
-    pitch   = max_ext / resolution
+
+    # For plate-like shapes, use the thin dimension to set the pitch so that
+    # every axis gets adequate voxels. This ensures through-holes can form.
+    # Minimum 4 voxels in any dimension for meaningful topology variation.
+    MIN_VOXELS_THIN = 4
+
+    if geo_type == "plate":
+        min_ext = extents.min()
+        # Pitch must be small enough for MIN_VOXELS_THIN in the thin direction
+        pitch_from_thin = min_ext / MIN_VOXELS_THIN
+        pitch_from_res  = max_ext / resolution
+        pitch = min(pitch_from_thin, pitch_from_res)
+        # Cap total voxel count to avoid memory explosion
+        total_est = (extents[0] / pitch) * (extents[1] / pitch) * (extents[2] / pitch)
+        max_voxels = resolution ** 3 * 2  # allow up to 2x the nominal budget
+        if total_est > max_voxels:
+            scale = (total_est / max_voxels) ** (1.0 / 3.0)
+            pitch *= scale
+        logger.info(
+            f"Plate geometry detected (extents {extents[0]:.1f}×{extents[1]:.1f}×{extents[2]:.1f}), "
+            f"pitch={pitch:.2f}mm for through-hole support"
+        )
+    else:
+        pitch = max_ext / resolution
 
     nx = max(2, int(math.ceil(extents[0] / pitch)))
     ny = max(2, int(math.ceil(extents[1] / pitch)))
     nz = max(2, int(math.ceil(extents[2] / pitch)))
+
+    # Enforce minimum voxels in every dimension
+    for dim_size, dim_name in [(nx, 'x'), (ny, 'y'), (nz, 'z')]:
+        if dim_size < MIN_VOXELS_THIN:
+            logger.warning(
+                f"Thin {dim_name}-dimension: {dim_size} voxels < {MIN_VOXELS_THIN} minimum"
+            )
 
     grid = np.zeros((nx, ny, nz), dtype=bool)
 
@@ -878,6 +935,68 @@ def topology_optimize(
         f"pitch={pitch:.2f}mm, vol={original_vol_cm3:.2f}cm³"
     )
 
+    # ── Plate-aware boundary condition adjustment ────────────────────────────
+    # For plate-like shapes, fixing/loading the large flat faces (top/bottom)
+    # creates uniform compression with no interesting load paths — the optimizer
+    # can't create holes. Automatically redirect to edge constraints.
+    verts_all = triangles.reshape(-1, 3)
+    extents = verts_all.max(axis=0) - verts_all.min(axis=0)
+    geo_type = _detect_geometry_type(extents)
+
+    if geo_type == "plate":
+        thin_axis = int(np.argmin(extents))  # 0=x, 1=y, 2=z
+        # Map thin axis to the face-pair that spans the thin dimension
+        thin_faces = {0: ("left", "right"), 1: ("front", "back"), 2: ("bottom", "top")}
+        flat_lo, flat_hi = thin_faces[thin_axis]
+
+        # If fixed_side or load_side are on the flat faces, redirect to edges
+        adjusted = False
+        # Determine the two in-plane axes (the large ones)
+        in_plane = [i for i in range(3) if i != thin_axis]
+        # Pick the longer in-plane axis for fixed edge, shorter for load edge
+        if extents[in_plane[0]] >= extents[in_plane[1]]:
+            long_ax, short_ax = in_plane[0], in_plane[1]
+        else:
+            long_ax, short_ax = in_plane[1], in_plane[0]
+
+        edge_map = {
+            0: ("left", "right"),
+            1: ("front", "back"),
+            2: ("bottom", "top"),
+        }
+
+        if fixed_side in (flat_lo, flat_hi):
+            old_fixed = fixed_side
+            fixed_side = edge_map[long_ax][0]  # fix the low-side of the long edge
+            adjusted = True
+            logger.info(
+                f"Plate: redirected fixed_side '{old_fixed}' → '{fixed_side}' "
+                f"(edge constraint for better load paths)"
+            )
+
+        if load_side in (flat_lo, flat_hi):
+            old_load = load_side
+            load_side = edge_map[long_ax][1]  # load the opposite edge
+            # Also adjust load direction to be along the long in-plane axis
+            load_dir = long_ax
+            adjusted = True
+            logger.info(
+                f"Plate: redirected load_side '{old_load}' → '{load_side}', "
+                f"load_dir → {load_dir} (in-plane loading for through-holes)"
+            )
+
+        if fixed_side == load_side:
+            # Ensure they're not the same after adjustment
+            load_side = edge_map[short_ax][1]
+            load_dir = short_ax
+            logger.info(f"Plate: load_side → '{load_side}' to avoid same-face conflict")
+
+        if adjusted:
+            logger.info(
+                f"Plate optimization: fixed='{fixed_side}', load='{load_side}', "
+                f"dir={load_dir} (in-plane BCs enable through-holes)"
+            )
+
     # Scale filter radius with resolution for consistent results across
     # different grid sizes. A radius of ~1.5 voxels works well for resolution=20;
     # scale proportionally for other resolutions.
@@ -891,6 +1010,18 @@ def topology_optimize(
         load_dir=load_dir, load_magnitude=load_magnitude,
         max_iter=max_iter,
     )
+
+    # ── Plate through-hole enforcement ───────────────────────────────────────
+    # For plate-like shapes, project densities through the thin axis so that
+    # partial-thickness voids become clean through-holes. This averages the
+    # density along the thin axis and assigns the mean to every voxel in that
+    # column — creating crisp solid/void decisions that go all the way through.
+    if geo_type == "plate":
+        thin_axis = int(np.argmin(extents))
+        logger.info(f"Plate: projecting densities through thin axis {thin_axis} for through-holes")
+        # Average density along the thin axis, broadcast back
+        mean_along_thin = density.mean(axis=thin_axis, keepdims=True)
+        density = np.broadcast_to(mean_along_thin, density.shape).copy()
 
     # Adaptive threshold: start at 0.5, fall back progressively so that a
     # degraded SIMP solve (e.g. bad BCs) still produces a usable mesh.
